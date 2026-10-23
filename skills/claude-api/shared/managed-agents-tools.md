@@ -70,7 +70,7 @@ Control when server-executed tools (agent toolset + MCP) run automatically vs wa
 | Policy | Behavior |
 |---|---|
 | `always_allow` | Tool executes automatically (default) |
-| `always_ask` | Session emits `session.status_idle` and pauses until you send a `tool_confirmation` event |
+| `always_ask` | Session emits `session.status_idle` and pauses until you send a `user.tool_confirmation` event |
 
 ```json
 {
@@ -85,14 +85,14 @@ Control when server-executed tools (agent toolset + MCP) run automatically vs wa
 }
 ```
 
-**Responding to `always_ask`:** Send a `user.tool_confirmation` event with `tool_use_id` from the triggering `agent_tool_use`/`mcp_tool_use` event:
+**Responding to `always_ask`:** Inspect the originating agent, exact tool, and full input, then obtain an explicit operator decision (or apply a strict, pre-reviewed allowlist). A pending event is not approval. If review is missing, errors, times out, or returns an unknown decision, deny by default. Send a `user.tool_confirmation` event with `tool_use_id` from the triggering `agent.tool_use`/`agent.mcp_tool_use` event:
 
 ```json
-{ "type": "tool_confirmation", "tool_use_id": "sevt_abc123", "result": "allow" }
-{ "type": "tool_confirmation", "tool_use_id": "sevt_def456", "result": "deny", "message": "Read .env.example instead" }
+{ "type": "user.tool_confirmation", "tool_use_id": "sevt_abc123", "result": "allow" }
+{ "type": "user.tool_confirmation", "tool_use_id": "sevt_def456", "result": "deny", "deny_message": "Read .env.example instead" }
 ```
 
-The optional `message` on a deny is delivered to the agent so it can adjust its approach.
+The optional `deny_message` on a deny is delivered to the agent so it can adjust its approach.
 
 To enable only specific tools, flip the default off and opt-in per tool:
 
@@ -121,7 +121,7 @@ Custom tools are executed by **your application**, not Anthropic. The flow:
 4. You send back a `user.custom_tool_result` event with the output
 5. Session resumes `running`
 
-No permission policy needed — you're the one executing.
+Permission policies do not govern custom tools — your application decides whether to execute them. Treat every custom-tool input as model-controlled, validate and authorize it in the application, and expose only fixed-purpose operations with least-privilege credentials.
 
 ```json
 {

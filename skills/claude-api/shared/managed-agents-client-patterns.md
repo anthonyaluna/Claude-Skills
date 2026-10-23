@@ -79,27 +79,44 @@ Reference: `interrupt.ts` — sends the interrupt the moment it sees `span.model
 
 ## 4. `tool_confirmation` round-trip
 
-When the agent has `permission_policy: { type: 'always_ask' }`, any call to that tool fires an `agent.tool_use` event with `evaluated_permission === 'ask'` and the session goes idle waiting for a decision. Respond with `user.tool_confirmation`.
+When the agent has `permission_policy: { type: 'always_ask' }`, a call fires an `agent.tool_use` or `agent.mcp_tool_use` event with `evaluated_permission === 'ask'`. Review the originating agent/thread, exact tool, and full input before responding. `confirmToolUse` below is application-owned: it must return `true` only after explicit operator approval (or a strict, pre-reviewed allowlist match). The example enforces a 30-second timeout; missing review, errors, timeouts, and unknown decisions deny by default.
 
 ```ts
 for await (const event of stream) {
-  if (event.type === 'agent.tool_use' && event.evaluated_permission === 'ask') {
+  if (
+    (event.type === 'agent.tool_use' || event.type === 'agent.mcp_tool_use') &&
+    event.evaluated_permission === 'ask'
+  ) {
+    const reviewTimeout = Symbol('review_timeout')
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    const decision = await Promise.race([
+      confirmToolUse(event).catch(() => false),
+      new Promise<typeof reviewTimeout>((resolve) => {
+        timeoutId = setTimeout(() => resolve(reviewTimeout), 30_000)
+      }),
+    ]).finally(() => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId)
+    })
+    const approved = decision === true
+
     await client.beta.sessions.events.send(session.id, {
       events: [{
         type: 'user.tool_confirmation',
         tool_use_id: event.id,         // not a toolu_ id — use event.id
-        result: 'allow',               // or 'deny'
-        // deny_message: '...',        // optional, only with result: 'deny'
+        result: approved ? 'allow' : 'deny',
+        ...(!approved ? { deny_message: 'Not approved by operator.' } : {}),
       }],
     })
   }
 }
 ```
 
+`confirmToolUse(event)` is a placeholder for your application's review flow, not an SDK method. It must render the full request to the operator and ignore late results after the timeout. Never resolve a pending event to `allow` merely because it exists or because the stream resumed.
+
 Key points:
 - `tool_use_id` is `event.id` (typically `sevt_...`), **not** a `toolu_...` ID.
 - `result` is `'allow' | 'deny'`. Use `deny_message` to tell the model *why* you denied — it gets surfaced back to the agent.
-- Multiple pending tools: respond once per `agent.tool_use` event with `evaluated_permission === 'ask'`.
+- Multiple pending tools: respond once per `agent.tool_use` or `agent.mcp_tool_use` event with `evaluated_permission === 'ask'`.
 
 Reference: `tool-permissions.ts`.
 
@@ -185,24 +202,41 @@ Delete the original via `files.delete(uploaded.id)`; the session-scoped copy is 
 
 **Problem:** you want the agent to call a third-party API or run a CLI that needs a secret (API key, token, service-account credential), but there is currently no way to set environment variables inside the session container, and vaults currently hold MCP credentials only — they are not exposed to the container's shell. So `curl`, installed CLIs, or SDK clients running via the `bash` tool have no first-class place to read a secret from.
 
-**Solution:** move the authenticated call to your side. Declare a custom tool on the agent; when the agent emits `agent.custom_tool_use`, your orchestrator (the process reading the SSE stream) executes the call with its own credentials and responds with `user.custom_tool_result`. The container never sees the key.
+**Solution:** move a narrowly scoped, application-authorized operation to your side. Declare an operation-specific custom tool on the agent; when the agent emits `agent.custom_tool_use`, your orchestrator validates and authorizes its input, executes only that fixed operation with its own credentials, minimizes the returned fields, and responds with `user.custom_tool_result`. The container never sees the key. Custom-tool inputs are model-controlled, so do not forward raw query text, URLs, shell commands, or other unrestricted operation selectors to a privileged client.
 
 ```ts
-// Agent template: declare the tool, no credentials
-tools: [{ type: 'custom', name: 'linear_graphql', input_schema: { /* query, vars */ } }]
+// Agent template: expose one read-only operation, no credentials
+tools: [{
+  type: 'custom',
+  name: 'linear_issue_lookup',
+  input_schema: {
+    type: 'object',
+    properties: { issue_id: { type: 'string' } },
+    required: ['issue_id'],
+    additionalProperties: false,
+  },
+}]
 
 // Orchestrator: handle the call with host-side creds
 for await (const event of stream) {
-  if (event.type === 'agent.custom_tool_use' && event.name === 'linear_graphql') {
-    const result = await linear.request(event.input.query, event.input.vars) // host's key
+  if (event.type === 'agent.custom_tool_use' && event.name === 'linear_issue_lookup') {
+    // App-owned adapter validates the ID, checks caller/resource access, uses a
+    // fixed read-only SDK operation, and returns only an allowlisted projection.
+    const result = await authorizedLinearIssueLookup(event.input.issue_id)
     await client.beta.sessions.events.send(session.id, {
-      events: [{ type: 'user.custom_tool_result', tool_use_id: event.id, result }],
+      events: [{
+        type: 'user.custom_tool_result',
+        custom_tool_use_id: event.id,
+        content: [{ type: 'text', text: JSON.stringify(result) }],
+      }],
     })
   }
 }
 ```
 
 Same shape works for `gh` CLI, local eval scripts, or anything else that needs host-side auth or binaries.
+
+Do not turn this into a generic `graphql(query, variables)` tool. For any write capability, define a separate fixed-purpose operation with least-privilege credentials and a separate explicit authorization/confirmation step; never let model-controlled query text select mutations.
 
 **Security note:** this does not expose a public endpoint. `agent.custom_tool_use` arrives on the SSE stream your orchestrator already holds open with your Anthropic API key, and `user.custom_tool_result` goes back via `events.send()` under the same key. Your orchestrator is a client, not a server — nothing unauthenticated is listening.
 

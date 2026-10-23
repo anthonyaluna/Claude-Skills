@@ -167,12 +167,13 @@ with client.beta.sessions.events.stream(
 ## Provide Custom Tool Result
 
 ```python
+# `event` is the matching `agent.custom_tool_use` event being answered.
 client.beta.sessions.events.send(
     session_id=session.id,
     events=[
         {
             "type": "user.custom_tool_result",
-            "custom_tool_use_id": "sevt_abc123",
+            "custom_tool_use_id": event.id,
             "content": [{"type": "text", "text": "All 42 tests passed."}],
         }
     ],

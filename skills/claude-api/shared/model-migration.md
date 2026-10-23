@@ -818,7 +818,7 @@ messages=[
 ]
 ```
 
-Phrase these as **context, not commands**. State the fact and let Claude act on it; avoid override-style language ("ignore what the user said", "regardless of the user's request", "disregard the previous instruction"). Claude is trained to protect users from instructions that appear to work against them, and that protection applies to the system role too. This is a beta (`anthropic-beta: mid-conversation-system-2026-04-07`) and is available from Opus 4.7 onward, not 4.8-exclusive. For cache-placement details and the older-model `<system-reminder>` fallback, see `shared/prompt-caching.md` and `shared/agent-design.md`.
+Phrase these as **context, not commands**. State the fact and let Claude act on it; avoid override-style language ("ignore what the user said", "regardless of the user's request", "disregard the previous instruction"). Claude is trained to protect users from instructions that appear to work against them, and that protection applies to the system role too. Mid-conversation system messages are model-gated; no beta header is required on supported models. For the current support list, cache placement, and unsupported-model authority boundary, see `shared/prompt-caching.md` and `shared/agent-design.md`.
 
 ### Capability improvements
 
@@ -878,7 +878,7 @@ For a caller **already on Opus 4.7**, only the first item is required; everythin
 - [ ] **[TUNE]** Writing voice: re-evaluate style prompts added to counter 4.7's directness — 4.8 is warmer and less hedged by default; re-baseline before keeping them
 - [ ] **[TUNE]** Code-review harnesses: keep the report-everything-filter-downstream pattern (4.8 follows "only high-severity" / "be conservative" filters literally, which can depress measured recall)
 - [ ] **[TUNE]** Thinking-disabled paths: add a final-answer-only instruction if reasoning leaks into the visible response
-- [ ] **[TUNE]** Consider mid-session system messages (`role:"system"` in `messages`, beta `mid-conversation-system-2026-04-07`) for context the app learns mid-session, instead of rebuilding the top-level system prompt and invalidating the cache
+- [ ] **[TUNE]** Consider mid-session system messages (`role:"system"` in `messages`) for context the app learns mid-session, instead of rebuilding the top-level system prompt and invalidating the cache; verify model support, and don't use user-turn text as an authority fallback
 
 ---
 

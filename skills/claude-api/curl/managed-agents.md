@@ -182,7 +182,9 @@ curl "https://api.anthropic.com/v1/sessions/$SESSION_ID/events?page=page_abc123"
 
 ## Provide Custom Tool Result
 
-When the agent calls a custom tool, send the result back:
+When the agent calls a custom tool, send the result back. Replace the sample
+`sevt_abc123` with the `id` from the matching `agent.custom_tool_use` event
+before sending.
 
 ```bash
 curl -X POST https://api.anthropic.com/v1/sessions/$SESSION_ID/events \
