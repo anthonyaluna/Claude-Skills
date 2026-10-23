@@ -268,6 +268,9 @@ async function runSession(client: Anthropic, sessionId: string) {
 
 ```typescript
 import fs from "fs";
+import os from "os";
+import path from "path";
+import { randomUUID } from "crypto";
 
 const file = await client.beta.files.upload({
   file: fs.createReadStream("data.csv"),
@@ -297,13 +300,16 @@ const files = await client.beta.files.list({
   scope_id: session.id,
   betas: ["managed-agents-2026-04-01"],
 });
+const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "managed-agent-outputs-"));
 for (const f of files.data) {
   console.log(f.filename, f.size_bytes);
 
-  // Download and save to disk
+  // Keep the remote filename as metadata; never use it as a local path.
   const resp = await client.beta.files.download(f.id);
   const buffer = Buffer.from(await resp.arrayBuffer());
-  fs.writeFileSync(f.filename, buffer);
+  const outputPath = path.join(outputDir, "download-" + randomUUID());
+  fs.writeFileSync(outputPath, buffer, { flag: "wx", mode: 0o600 });
+  console.log("Saved to", outputPath);
 }
 ```
 

@@ -272,16 +272,23 @@ session = client.beta.sessions.create(
 List files the agent wrote to `/mnt/session/outputs/` during a session, then download them.
 
 ```python
+import secrets
+import tempfile
+from pathlib import Path
+
 # List files associated with a session
 files = client.beta.files.list(
     scope_id=session.id,
     betas=["managed-agents-2026-04-01"],
 )
+output_dir = Path(tempfile.mkdtemp(prefix="managed-agent-outputs-"))
 for f in files.data:
     print(f.filename, f.size_bytes)
-    # Download each file and save to disk
+    # Keep the remote filename as metadata; never use it as a local path.
+    output_path = output_dir / f"download-{secrets.token_hex(16)}"
     file_content = client.beta.files.download(f.id)
-    file_content.write_to_file(f.filename)
+    file_content.write_to_file(str(output_path))
+    print("Saved to", output_path)
 ```
 
 > 💡 There's a brief indexing lag (~1–3s) between `session.status_idle` and output files appearing in `files.list`. Retry once or twice if the list is empty.
