@@ -4,19 +4,15 @@ Recalculates all formulas in an Excel file using LibreOffice
 """
 
 import json
-import os
 import platform
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from office.soffice import get_soffice_env
 
 from openpyxl import load_workbook
-
-MACRO_DIR_MACOS = "~/Library/Application Support/LibreOffice/4/user/basic/Standard"
-MACRO_DIR_LINUX = "~/.config/libreoffice/4/user/basic/Standard"
-MACRO_FILENAME = "Module1.xba"
 
 RECALCULATE_MACRO = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE script:module PUBLIC "-//OpenOffice.org//DTD OfficeDocument 1.0//EN" "module.dtd">
@@ -39,32 +35,34 @@ def has_gtimeout():
         return False
 
 
-def setup_libreoffice_macro():
-    macro_dir = os.path.expanduser(
-        MACRO_DIR_MACOS if platform.system() == "Darwin" else MACRO_DIR_LINUX
-    )
-    macro_file = os.path.join(macro_dir, MACRO_FILENAME)
-
-    if (
-        os.path.exists(macro_file)
-        and "RecalculateAndSave" in Path(macro_file).read_text()
-    ):
-        return True
-
-    if not os.path.exists(macro_dir):
-        subprocess.run(
-            ["soffice", "--headless", "--terminate_after_init"],
-            capture_output=True,
-            timeout=10,
-            env=get_soffice_env(),
-        )
-        os.makedirs(macro_dir, exist_ok=True)
-
+def setup_libreoffice_macro(profile_dir: Path) -> bool:
+    profile_dir = Path(profile_dir)
+    macro_dir = profile_dir / "user" / "basic" / "Standard"
+    macro_file = macro_dir / "Module1.xba"
     try:
-        Path(macro_file).write_text(RECALCULATE_MACRO)
-        return True
+        if any(profile_dir.iterdir()):
+            return False
     except Exception:
         return False
+
+    subprocess.run(
+        [
+            "soffice",
+            "--headless",
+            f"-env:UserInstallation={profile_dir.as_uri()}",
+            "--terminate_after_init",
+        ],
+        capture_output=True,
+        timeout=10,
+        env=get_soffice_env(),
+    )
+
+    try:
+        macro_dir.mkdir(parents=True, exist_ok=True)
+        macro_file.write_text(RECALCULATE_MACRO)
+    except Exception:
+        return False
+    return True
 
 
 def recalc(filename, timeout=30):
@@ -73,23 +71,28 @@ def recalc(filename, timeout=30):
 
     abs_path = str(Path(filename).absolute())
 
-    if not setup_libreoffice_macro():
-        return {"error": "Failed to setup LibreOffice macro"}
+    with tempfile.TemporaryDirectory(prefix="libreoffice-recalc-") as profile:
+        profile_dir = Path(profile)
+        if not setup_libreoffice_macro(profile_dir):
+            return {"error": "Failed to setup LibreOffice macro"}
 
-    cmd = [
-        "soffice",
-        "--headless",
-        "--norestore",
-        "vnd.sun.star.script:Standard.Module1.RecalculateAndSave?language=Basic&location=application",
-        abs_path,
-    ]
+        cmd = [
+            "soffice",
+            "--headless",
+            f"-env:UserInstallation={profile_dir.as_uri()}",
+            "--norestore",
+            "vnd.sun.star.script:Standard.Module1.RecalculateAndSave?language=Basic&location=application",
+            abs_path,
+        ]
 
-    if platform.system() == "Linux":
-        cmd = ["timeout", str(timeout)] + cmd
-    elif platform.system() == "Darwin" and has_gtimeout():
-        cmd = ["gtimeout", str(timeout)] + cmd
+        if platform.system() == "Linux":
+            cmd = ["timeout", str(timeout)] + cmd
+        elif platform.system() == "Darwin" and has_gtimeout():
+            cmd = ["gtimeout", str(timeout)] + cmd
 
-    result = subprocess.run(cmd, capture_output=True, text=True, env=get_soffice_env())
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, env=get_soffice_env()
+        )
 
     if result.returncode != 0 and result.returncode != 124:  
         error_msg = result.stderr or "Unknown error during recalculation"
