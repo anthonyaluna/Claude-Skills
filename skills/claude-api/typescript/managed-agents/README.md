@@ -34,7 +34,7 @@ const environment = await client.beta.environments.create(
     name: "my-dev-env",
     config: {
       type: "cloud",
-      networking: { type: "unrestricted" },
+      networking: { type: "limited" },
     },
   },
 );
@@ -49,13 +49,14 @@ console.log(environment.id); // env_...
 
 ### Minimal
 
+This example creates an agent with no built-in tools. Add only the task-specific tools it needs; see `shared/managed-agents-tools.md` for the deny-by-default allowlist pattern.
+
 ```typescript
 // 1. Create the agent (reusable, versioned)
 const agent = await client.beta.agents.create(
   {
     name: "Coding Assistant",
     model: "claude-opus-4-8",
-    tools: [{ type: "agent_toolset_20260401", default_config: { enabled: true } }],
   },
 );
 
@@ -78,7 +79,6 @@ const agent = await client.beta.agents.create(
     model: "claude-opus-4-8",
     system: "You are a senior code reviewer.",
     tools: [
-      { type: "agent_toolset_20260401", default_config: { enabled: true } },
       {
         type: "custom",
         name: "run_tests",
@@ -339,6 +339,8 @@ await client.beta.sessions.archive("sesn_011CZxAbc123Def456");
 
 ## MCP Server Integration
 
+With `limited` networking, add only the MCP server's host (`my-mcp-server.example.com`) to the environment's `allowed_hosts` before creating a session.
+
 ```typescript
 // Agent declares MCP server (no auth here — auth goes in a vault)
 const agent = await client.beta.agents.create({
@@ -348,7 +350,6 @@ const agent = await client.beta.agents.create({
     { type: "url", name: "my-tools", url: "https://my-mcp-server.example.com/sse" },
   ],
   tools: [
-    { type: "agent_toolset_20260401", default_config: { enabled: true } },
     { type: "mcp_toolset", mcp_server_name: "my-tools" },
   ],
 });

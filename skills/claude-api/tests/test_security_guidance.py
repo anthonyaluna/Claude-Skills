@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 
 
@@ -78,6 +79,55 @@ class SecurityGuidanceTests(unittest.TestCase):
         self.assertIn("Replace the sample", curl)
         self.assertIn("`sevt_abc123` with the `id` from the matching", curl)
         self.assertIn("`agent.custom_tool_use` event before sending.", curl)
+
+    def test_managed_agent_quickstarts_use_restricted_networks_and_no_default_tools(self) -> None:
+        quickstarts = [
+            REPO / "skills/claude-api/python/managed-agents/README.md",
+            REPO / "skills/claude-api/typescript/managed-agents/README.md",
+            REPO / "skills/claude-api/php/managed-agents/README.md",
+            REPO / "skills/claude-api/java/managed-agents/README.md",
+            REPO / "skills/claude-api/go/managed-agents/README.md",
+            REPO / "skills/claude-api/ruby/managed-agents/README.md",
+            REPO / "skills/claude-api/curl/managed-agents.md",
+        ]
+
+        def section(text: str, heading: str) -> str:
+            start = text.index(heading) + len(heading)
+            following = re.search(r"(?m)^#{1,3} ", text[start:])
+            return text[start:] if following is None else text[start : start + following.start()]
+
+        for path in quickstarts:
+            with self.subTest(path=path):
+                doc = path.read_text(encoding="utf-8")
+                environment = section(doc, "## Create an Environment")
+                minimal_agent = section(doc, "### Minimal")
+
+                self.assertIn("limited", environment.lower())
+                self.assertNotIn("unrestricted", environment.lower())
+                self.assertIn("no built-in tools", minimal_agent.lower())
+                self.assertNotIn("agent_toolset_20260401", minimal_agent)
+
+                mcp_example = section(doc, "## MCP Server Integration")
+                self.assertNotIn("agent_toolset_20260401", mcp_example)
+
+    def test_shared_managed_agent_guidance_defaults_to_least_privilege(self) -> None:
+        tools = self.read_doc("managed-agents-tools.md")
+        onboarding = self.read_doc("managed-agents-onboarding.md")
+        environments = self.read_doc("managed-agents-environments.md")
+
+        self.assertIn('"enabled": false', tools)
+        self.assertIn('"type": "auto"', tools)
+        self.assertIn("A bare toolset enables all eight tools", tools)
+        self.assertIn("bare toolset enables all eight tools", onboarding)
+        self.assertNotIn("Recommend enabling the full toolset", onboarding)
+        self.assertIn("limited` and deny-by-default egress", onboarding)
+        python_quickstart = (
+            REPO / "skills/claude-api/python/managed-agents/README.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("add only the MCP server's host", python_quickstart)
+        self.assertIn("recommended starting point", environments.lower())
+        self.assertNotIn('"allow_package_managers": true', environments)
+        self.assertNotIn('"allow_mcp_servers": true', environments)
 
     def test_user_turn_reminder_is_not_authoritative_fallback(self) -> None:
         prompt_caching = self.read_doc("prompt-caching.md")

@@ -124,7 +124,7 @@ AGENT_ID=$(ant beta:agents create --name "My Agent" --model '{id: claude-sonnet-
 ant beta:agents create \
   --name "Research Agent" \
   --model '{id: claude-opus-4-8}' \
-  --tool '{type: agent_toolset_20260401}' \
+  --tool '{type: agent_toolset_20260401, default_config: {enabled: false, permission_policy: {type: auto}}, configs: [{name: web_search, enabled: true}]}' \
   --tool '{type: custom, name: search_docs, input_schema: {type: object, properties: {query: {type: string}}}}'
 ```
 
@@ -138,6 +138,13 @@ system: |
   You are a research assistant. Cite sources for every claim.
 tools:
   - type: agent_toolset_20260401
+    default_config:
+      enabled: false
+      permission_policy:
+        type: auto
+    configs:
+      - name: web_search
+        enabled: true
 YAML
 ```
 
@@ -166,8 +173,7 @@ name: Summarizer
 model: claude-sonnet-4-6
 system: |
   You are a helpful assistant that writes concise summaries.
-tools:
-  - type: agent_toolset_20260401
+# No tools are declared here; add only task-specific tools when needed.
 ```
 
 ```sh

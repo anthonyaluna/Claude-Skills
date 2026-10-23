@@ -15,7 +15,7 @@ orchestrator = client.beta.agents.create(
     name="Engineering Lead",
     model="claude-opus-4-8",
     system="You coordinate engineering work. Delegate code review to the reviewer and test writing to the test agent.",
-    tools=[{"type": "agent_toolset_20260401"}],
+    tools=[{"type": "agent_toolset_20260401", "default_config": {"enabled": False}}],
     multiagent={
         "type": "coordinator",
         "agents": [

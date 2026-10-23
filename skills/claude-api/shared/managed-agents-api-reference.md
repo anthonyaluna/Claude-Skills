@@ -213,7 +213,7 @@ Immutable per-mutation snapshots (`memver_...`) — the audit and rollback surfa
   "description": "string (optional, up to 2048 chars)",
   "system": "string (optional, up to 100,000 chars)",
   "tools": [
-    { "type": "agent_toolset_20260401" }
+    { "type": "agent_toolset_20260401", "default_config": { "enabled": false } }
   ],
   "skills": [
     { "type": "anthropic", "skill_id": "xlsx" },
