@@ -174,10 +174,10 @@
       height: auto;
       border-radius: 4px;
     }
-    .output-file-content iframe {
-      width: 100%;
-      height: 600px;
-      border: none;
+    .output-file-content .preview-notice {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+      line-height: 1.5;
     }
     .output-file-content table {
       border-collapse: collapse;
@@ -760,6 +760,13 @@
       document.querySelector(".main").scrollTop = 0;
     }
 
+    function appendOutputNotice(container, message) {
+      const notice = document.createElement("p");
+      notice.className = "preview-notice";
+      notice.textContent = message;
+      container.appendChild(notice);
+    }
+
     // ---- Render outputs ----
     function renderOutputs(run) {
       const container = document.getElementById("outputs-body");
@@ -802,9 +809,7 @@
           img.alt = file.name;
           content.appendChild(img);
         } else if (file.type === "pdf") {
-          const iframe = document.createElement("iframe");
-          iframe.src = file.data_uri;
-          content.appendChild(iframe);
+          appendOutputNotice(content, "Inline PDF preview is disabled. Use Download to view this file.");
         } else if (file.type === "xlsx") {
           renderXlsx(content, file.data_b64);
         } else if (file.type === "binary") {
@@ -828,13 +833,34 @@
 
     // ---- XLSX rendering via SheetJS ----
     function renderXlsx(container, b64Data) {
+      const maxPreviewBytes = 5 * 1024 * 1024;
+      const maxPreviewCells = 10000;
+      const maxPreviewRows = 20;
+
+      if (typeof b64Data !== "string") {
+        appendOutputNotice(container, "Spreadsheet preview is unavailable for this file. Use Download to view the workbook.");
+        return;
+      }
+      if (b64Data.length > Math.ceil(maxPreviewBytes / 3) * 4) {
+        appendOutputNotice(container, "Spreadsheet preview skipped because the file exceeds 5 MiB. Use Download to view the workbook.");
+        return;
+      }
+
       try {
         const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
-        const wb = XLSX.read(raw, { type: "array" });
+        const wb = XLSX.read(raw, {
+          type: "array",
+          sheets: 0,
+          sheetRows: maxPreviewRows,
+          cellHTML: false,
+          cellFormula: false,
+          cellStyles: false,
+        });
+        let renderedCells = 0;
 
-        for (let i = 0; i < wb.SheetNames.length; i++) {
-          const sheetName = wb.SheetNames[i];
+        for (const sheetName of wb.SheetNames.slice(0, 1)) {
           const ws = wb.Sheets[sheetName];
+          if (!ws) continue;
 
           if (wb.SheetNames.length > 1) {
             const sheetLabel = document.createElement("div");
@@ -844,11 +870,106 @@
             container.appendChild(sheetLabel);
           }
 
-          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
           const wrapper = document.createElement("div");
-          wrapper.innerHTML = htmlStr;
+          const table = document.createElement("table");
+          const range = ws["!ref"] ? XLSX.utils.decode_range(ws["!ref"]) : null;
+
+          if (range) {
+            const rangeCoordinates = [range.s.r, range.s.c, range.e.r, range.e.c];
+            if (!rangeCoordinates.every(Number.isSafeInteger)
+              || range.s.r < 0
+              || range.s.c < 0
+              || range.e.r < range.s.r
+              || range.e.c < range.s.c) {
+              appendOutputNotice(container, "Spreadsheet preview is unavailable for this worksheet range. Use Download to view the workbook.");
+              continue;
+            }
+
+            const availableRows = range.e.r - range.s.r + 1;
+            const availableColumns = range.e.c - range.s.c + 1;
+            const remainingCells = maxPreviewCells - renderedCells;
+            if (remainingCells <= 0) break;
+
+            const columnsToRender = Math.min(availableColumns, remainingCells);
+            const rowsToRender = Math.min(
+              availableRows,
+              maxPreviewRows,
+              Math.floor(remainingCells / columnsToRender)
+            );
+            if (columnsToRender <= 0 || rowsToRender <= 0) break;
+
+            const previewEnd = {
+              r: range.s.r + rowsToRender - 1,
+              c: range.s.c + columnsToRender - 1,
+            };
+            const cellsToRender = rowsToRender * columnsToRender;
+            const merges = ws["!merges"] || [];
+            const mergedAt = new Map();
+            const mergedOver = new Set();
+            let mergeCellsRemaining = cellsToRender;
+            const mergesToInspect = Math.min(merges.length, maxPreviewCells);
+
+            for (let mergeIndex = 0; mergeIndex < mergesToInspect; mergeIndex++) {
+              const merge = merges[mergeIndex];
+              if (!merge || !merge.s || !merge.e) continue;
+              const mergeCoordinates = [merge.s.r, merge.s.c, merge.e.r, merge.e.c];
+              if (!mergeCoordinates.every(Number.isSafeInteger)
+                || merge.s.r < range.s.r
+                || merge.s.c < range.s.c
+                || merge.e.r > previewEnd.r
+                || merge.e.c > previewEnd.c
+                || merge.e.r < merge.s.r
+                || merge.e.c < merge.s.c) continue;
+
+              const mergeHeight = merge.e.r - merge.s.r + 1;
+              const mergeWidth = merge.e.c - merge.s.c + 1;
+              const mergeCells = mergeHeight * mergeWidth;
+              if (mergeCells > mergeCellsRemaining) continue;
+              mergeCellsRemaining -= mergeCells;
+
+              const startKey = XLSX.utils.encode_cell(merge.s);
+              mergedAt.set(startKey, {
+                rowSpan: mergeHeight,
+                colSpan: mergeWidth,
+              });
+              for (let row = merge.s.r; row <= merge.e.r; row++) {
+                for (let col = merge.s.c; col <= merge.e.c; col++) {
+                  if (row !== merge.s.r || col !== merge.s.c) {
+                    mergedOver.add(XLSX.utils.encode_cell({ r: row, c: col }));
+                  }
+                }
+              }
+            }
+
+            for (let row = range.s.r; row <= previewEnd.r; row++) {
+              const tableRow = document.createElement("tr");
+              for (let col = range.s.c; col <= previewEnd.c; col++) {
+                const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
+                if (mergedOver.has(cellAddress)) continue;
+
+                const tableCell = document.createElement("td");
+                const merge = mergedAt.get(cellAddress);
+                if (merge) {
+                  tableCell.rowSpan = merge.rowSpan;
+                  tableCell.colSpan = merge.colSpan;
+                }
+                const cell = ws[cellAddress];
+                tableCell.textContent = cell && cell.w != null
+                  ? String(cell.w)
+                  : cell && cell.v != null
+                    ? String(cell.v)
+                    : "";
+                tableRow.appendChild(tableCell);
+              }
+              table.appendChild(tableRow);
+            }
+            renderedCells += cellsToRender;
+          }
+
+          wrapper.appendChild(table);
           container.appendChild(wrapper);
         }
+        appendOutputNotice(container, "Spreadsheet preview is limited to the first worksheet, first 20 rows, 10,000 cells, and 5 MiB. Use Download to view the full workbook.");
       } catch (err) {
         container.textContent = "Error rendering spreadsheet: " + err.message;
       }
@@ -881,8 +1002,8 @@
         : "?";
       const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
       html += '<div class="grades-summary">';
-      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
-      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '<span class="grade-badge ' + badgeClass + '">' + escapeHtml(passRate) + '</span>';
+      html += '<span>' + escapeHtml(summary.passed || 0) + ' passed, ' + escapeHtml(summary.failed || 0) + ' failed of ' + escapeHtml(summary.total || 0) + '</span>';
       html += '</div>';
 
       // Assertions list
@@ -962,9 +1083,7 @@
           img.alt = file.name;
           fc.appendChild(img);
         } else if (file.type === "pdf") {
-          const iframe = document.createElement("iframe");
-          iframe.src = file.data_uri;
-          fc.appendChild(iframe);
+          appendOutputNotice(fc, "Inline PDF preview is disabled. Use Download to view this file.");
         } else if (file.type === "xlsx") {
           renderXlsx(fc, file.data_b64);
         } else if (file.type === "binary") {
@@ -1097,9 +1216,12 @@
     }
 
     function escapeHtml(text) {
-      const div = document.createElement("div");
-      div.textContent = text;
-      return div.innerHTML;
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
     }
 
     // ---- View switching ----
@@ -1129,9 +1251,9 @@
       html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
       html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
       if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
-      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
-      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
-      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      if (metadata.timestamp) html += escapeHtml(metadata.timestamp) + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + escapeHtml(metadata.evals_run.join(", ")) + " &mdash; ";
+      html += escapeHtml(metadata.runs_per_configuration || "?") + " runs per configuration";
       html += "</p>";
 
       // Summary table
@@ -1139,9 +1261,12 @@
 
       function fmtStat(stat, pct) {
         if (!stat) return "—";
+        const mean = Number(stat.mean);
+        const stddev = Number(stat.stddev);
+        if (!Number.isFinite(mean) || !Number.isFinite(stddev)) return "—";
         const suffix = pct ? "%" : "";
-        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
-        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        const m = pct ? (mean * 100).toFixed(0) : mean.toFixed(1);
+        const s = pct ? (stddev * 100).toFixed(0) : stddev.toFixed(1);
         return m + suffix + " ± " + s + suffix;
       }
 
@@ -1169,14 +1294,14 @@
       html += "<tr><td><strong>Pass Rate</strong></td>";
       html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
       html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
-      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + escapeHtml(delta.pass_rate || "—") + "</td></tr>";
 
       // Time (only show row if data exists)
       if (a.time_seconds || b.time_seconds) {
         html += "<tr><td><strong>Time (s)</strong></td>";
         html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
         html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
-        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + escapeHtml(delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
       }
 
       // Tokens (only show row if data exists)
@@ -1184,7 +1309,7 @@
         html += "<tr><td><strong>Tokens</strong></td>";
         html += "<td>" + fmtStat(a.tokens, false) + "</td>";
         html += "<td>" + fmtStat(b.tokens, false) + "</td>";
-        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + escapeHtml(delta.tokens || "—") + "</td></tr>";
       }
 
       html += "</tbody></table>";
@@ -1219,17 +1344,21 @@
             if (configRuns.length === 0) continue;
 
             const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
-            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+            const configLabel = escapeHtml(config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()));
 
             for (const run of configRuns) {
               const r = run.result || {};
               const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
               html += '<tr class="' + rowClass + '">';
               html += "<td>" + configLabel + "</td>";
-              html += "<td>" + run.run_number + "</td>";
-              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
-              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
-              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              const passRate = Number(r.pass_rate) || 0;
+              html += "<td>" + escapeHtml(run.run_number) + "</td>";
+              html += '<td class="' + prClass + '">' + (passRate * 100).toFixed(0) + "% (" + escapeHtml(r.passed || 0) + "/" + escapeHtml(r.total || 0) + ")</td>";
+              if (hasTime) {
+                const timeSeconds = Number(r.time_seconds);
+                html += "<td>" + (Number.isFinite(timeSeconds) ? timeSeconds.toFixed(1) : "—") + "</td>";
+              }
+              if (hasErrors) html += "<td>" + escapeHtml(r.errors || 0) + "</td>";
               html += "</tr>";
             }
 
@@ -1289,7 +1418,7 @@
                   if (exp) {
                     const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
                     const icon = exp.passed ? "\u2713" : "\u2717";
-                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                    html += '<span class="' + cls + '" title="Run ' + escapeHtml(run.run_number) + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
                   } else {
                     html += "— ";
                   }

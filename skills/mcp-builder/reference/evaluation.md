@@ -31,6 +31,12 @@ This document provides guidance on creating comprehensive evaluations for MCP se
 
 The measure of quality of an MCP server is NOT how well or comprehensively the server implements tools, but how well these implementations (input/output schemas, docstrings/descriptions, functionality) enable LLMs with no other context and access ONLY to the MCP servers to answer realistic and difficult questions.
 
+## Tool Allowlist
+
+The evaluation runner requires an explicit operator allowlist. Pass each verified read-only tool by name with a repeated --allow-tool option. For example: python evaluation.py --allow-tool list_records --allow-tool get_record eval.xml
+
+Only those tools are shown to the model, and the runner checks the allowlist again immediately before every call. Choose tools only after reviewing their behavior and authorization scope. Server-provided annotations and descriptions are not an enforcement boundary; do not allowlist a tool unless its operation is read-only for the credentials in use.
+
 ## Evaluation Overview
 
 Create 10 human-readable questions requiring ONLY READ-ONLY, INDEPENDENT, NON-DESTRUCTIVE, and IDEMPOTENT operations to answer. Each question should be:
@@ -422,6 +428,7 @@ The evaluation script (`scripts/evaluation.py`) supports three transport types:
 **Important:**
 - **stdio transport**: The evaluation script automatically launches and manages the MCP server process for you. Do not run the server manually.
 - **sse/http transports**: You must start the MCP server separately before running the evaluation. The script connects to the already-running server at the specified URL.
+- Every invocation must include `--allow-tool` for at least one tool verified as read-only with the credentials in use. The examples use `list_records` illustratively; replace it with the exact read-only tool name advertised by your server and repeat the option for each approved tool.
 
 ### 1. Local STDIO Server
 
@@ -429,6 +436,7 @@ For locally-run MCP servers (script launches the server automatically):
 
 ```bash
 python scripts/evaluation.py \
+  --allow-tool list_records \
   -t stdio \
   -c python \
   -a my_mcp_server.py \
@@ -438,6 +446,7 @@ python scripts/evaluation.py \
 With environment variables:
 ```bash
 python scripts/evaluation.py \
+  --allow-tool list_records \
   -t stdio \
   -c python \
   -a my_mcp_server.py \
@@ -452,6 +461,7 @@ For SSE-based MCP servers (you must start the server first):
 
 ```bash
 python scripts/evaluation.py \
+  --allow-tool list_records \
   -t sse \
   -u https://example.com/mcp \
   -H "Authorization: Bearer token123" \
@@ -465,6 +475,7 @@ For HTTP-based MCP servers (you must start the server first):
 
 ```bash
 python scripts/evaluation.py \
+  --allow-tool list_records \
   -t http \
   -u https://example.com/mcp \
   -H "Authorization: Bearer token123" \
@@ -474,16 +485,18 @@ python scripts/evaluation.py \
 ## Command-Line Options
 
 ```
-usage: evaluation.py [-h] [-t {stdio,sse,http}] [-m MODEL] [-c COMMAND]
-                     [-a ARGS [ARGS ...]] [-e ENV [ENV ...]] [-u URL]
-                     [-H HEADERS [HEADERS ...]] [-o OUTPUT]
-                     eval_file
+usage: evaluation.py [-h] --allow-tool ALLOWED_TOOLS [-t {stdio,sse,http}]
+                     [-m MODEL] [-c COMMAND] [-a ARGS [ARGS ...]]
+                     [-e ENV [ENV ...]] [-u URL] [-H HEADERS [HEADERS ...]]
+                     [-o OUTPUT] eval_file
 
 positional arguments:
   eval_file             Path to evaluation XML file
 
 optional arguments:
   -h, --help            Show help message
+  --allow-tool ALLOWED_TOOLS
+                        Explicitly allow a verified read-only MCP tool name; repeat for each tool
   -t, --transport       Transport type: stdio, sse, or http (default: stdio)
   -m, --model           Claude model to use (default: claude-3-7-sonnet-20250219)
   -o, --output          Output file for report (default: print to stdout)
@@ -520,6 +533,7 @@ The evaluation script generates a detailed report including:
 
 ```bash
 python scripts/evaluation.py \
+  --allow-tool list_records \
   -t stdio \
   -c python \
   -a my_server.py \
@@ -561,6 +575,7 @@ export ANTHROPIC_API_KEY=your_api_key
 
 ```bash
 python scripts/evaluation.py \
+  --allow-tool list_records \
   -t stdio \
   -c python \
   -a github_mcp_server.py \

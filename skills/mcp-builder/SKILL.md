@@ -177,6 +177,8 @@ Ensure each question is:
 - **Verifiable**: Single, clear answer that can be verified by string comparison
 - **Stable**: Answer won't change over time
 
+When running the evaluator, explicitly allowlist each verified read-only tool with a repeated --allow-tool <name> option. The evaluator withholds all other tools and rejects any unallowlisted call at runtime. Do not rely on model instructions or server-provided annotations as the safety boundary.
+
 #### 4.4 Output Format
 
 Create an XML file with this structure:

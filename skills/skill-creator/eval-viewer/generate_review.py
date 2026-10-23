@@ -47,6 +47,10 @@ MIME_OVERRIDES = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
+MAX_OUTPUT_FILE_BYTES = 5 * 1024 * 1024
+MAX_OUTPUT_FILES_PER_RUN = 100
+MAX_WORKSPACE_OUTPUT_FILES = 1000
+MAX_WORKSPACE_OUTPUT_BYTES = 25 * 1024 * 1024
 
 
 def get_mime_type(path: Path) -> str:
@@ -60,29 +64,48 @@ def get_mime_type(path: Path) -> str:
 def find_runs(workspace: Path) -> list[dict]:
     """Recursively find directories that contain an outputs/ subdirectory."""
     runs: list[dict] = []
-    _find_runs_recursive(workspace, workspace, runs)
+    budget = {
+        "remaining_bytes": MAX_WORKSPACE_OUTPUT_BYTES,
+        "remaining_files": MAX_WORKSPACE_OUTPUT_FILES,
+    }
+    _find_runs_recursive(workspace, workspace, runs, budget)
     runs.sort(key=lambda r: (r.get("eval_id", float("inf")), r["id"]))
     return runs
 
 
-def _find_runs_recursive(root: Path, current: Path, runs: list[dict]) -> None:
-    if not current.is_dir():
+def _find_runs_recursive(
+    root: Path,
+    current: Path,
+    runs: list[dict],
+    budget: dict[str, int],
+) -> None:
+    if (
+        not current.is_dir()
+        or budget["remaining_files"] <= 0
+        or budget["remaining_bytes"] <= 0
+    ):
         return
 
     outputs_dir = current / "outputs"
     if outputs_dir.is_dir():
-        run = build_run(root, current)
+        run = build_run(root, current, budget)
         if run:
             runs.append(run)
         return
 
     skip = {"node_modules", ".git", "__pycache__", "skill", "inputs"}
     for child in sorted(current.iterdir()):
+        if budget["remaining_files"] <= 0 or budget["remaining_bytes"] <= 0:
+            break
         if child.is_dir() and child.name not in skip:
-            _find_runs_recursive(root, child, runs)
+            _find_runs_recursive(root, child, runs, budget)
 
 
-def build_run(root: Path, run_dir: Path) -> dict | None:
+def build_run(
+    root: Path,
+    run_dir: Path,
+    budget: dict[str, int] | None = None,
+) -> dict | None:
     """Build a run dict with prompt, outputs, and grading data."""
     prompt = ""
     eval_id = None
@@ -121,10 +144,32 @@ def build_run(root: Path, run_dir: Path) -> dict | None:
     # Collect output files
     outputs_dir = run_dir / "outputs"
     output_files: list[dict] = []
+    output_limit_reached = False
     if outputs_dir.is_dir():
-        for f in sorted(outputs_dir.iterdir()):
+        candidates = []
+        for f in outputs_dir.iterdir():
             if f.is_file() and f.name not in METADATA_FILES:
-                output_files.append(embed_file(f))
+                candidates.append(f)
+                if len(candidates) > MAX_OUTPUT_FILES_PER_RUN:
+                    output_limit_reached = True
+                    break
+        for f in sorted(candidates[:MAX_OUTPUT_FILES_PER_RUN]):
+            if budget and (
+                budget["remaining_files"] <= 0 or budget["remaining_bytes"] <= 0
+            ):
+                output_limit_reached = True
+                break
+            output_files.append(embed_file(f, budget))
+        if budget and (
+            budget["remaining_files"] <= 0 or budget["remaining_bytes"] <= 0
+        ):
+            output_limit_reached = True
+    if output_limit_reached:
+        output_files.append({
+            "name": "Additional outputs omitted",
+            "type": "error",
+            "content": "(Review output budget reached; later outputs may be omitted. Inspect source files directly for complete coverage.)",
+        })
 
     # Load grading if present
     grading = None
@@ -146,27 +191,49 @@ def build_run(root: Path, run_dir: Path) -> dict | None:
     }
 
 
-def embed_file(path: Path) -> dict:
+def embed_file(path: Path, budget: dict[str, int] | None = None) -> dict:
     """Read a file and return an embedded representation."""
     ext = path.suffix.lower()
     mime = get_mime_type(path)
 
+    available_bytes = MAX_OUTPUT_FILE_BYTES
+    if budget:
+        if budget["remaining_files"] <= 0 or budget["remaining_bytes"] <= 0:
+            return {
+                "name": path.name,
+                "type": "error",
+                "content": "(Review output limit reached; inspect this file outside the viewer)",
+            }
+        available_bytes = min(available_bytes, budget["remaining_bytes"])
+        budget["remaining_files"] -= 1
+
+    try:
+        with path.open("rb") as output_file:
+            raw = output_file.read(available_bytes + 1)
+    except OSError:
+        return {"name": path.name, "type": "error", "content": "(Error reading file)"}
+
+    if budget:
+        budget["remaining_bytes"] -= min(len(raw), available_bytes)
+
+    if len(raw) > available_bytes:
+        return {
+            "name": path.name,
+            "type": "error",
+            "content": (
+                f"(File exceeds the {available_bytes}-byte inline review limit; "
+                "download it outside this viewer to inspect it)"
+            ),
+        }
+
     if ext in TEXT_EXTENSIONS:
-        try:
-            content = path.read_text(errors="replace")
-        except OSError:
-            content = "(Error reading file)"
         return {
             "name": path.name,
             "type": "text",
-            "content": content,
+            "content": raw.decode("utf-8", errors="replace"),
         }
     elif ext in IMAGE_EXTENSIONS:
-        try:
-            raw = path.read_bytes()
-            b64 = base64.b64encode(raw).decode("ascii")
-        except OSError:
-            return {"name": path.name, "type": "error", "content": "(Error reading file)"}
+        b64 = base64.b64encode(raw).decode("ascii")
         return {
             "name": path.name,
             "type": "image",
@@ -174,22 +241,14 @@ def embed_file(path: Path) -> dict:
             "data_uri": f"data:{mime};base64,{b64}",
         }
     elif ext == ".pdf":
-        try:
-            raw = path.read_bytes()
-            b64 = base64.b64encode(raw).decode("ascii")
-        except OSError:
-            return {"name": path.name, "type": "error", "content": "(Error reading file)"}
+        b64 = base64.b64encode(raw).decode("ascii")
         return {
             "name": path.name,
             "type": "pdf",
             "data_uri": f"data:{mime};base64,{b64}",
         }
     elif ext == ".xlsx":
-        try:
-            raw = path.read_bytes()
-            b64 = base64.b64encode(raw).decode("ascii")
-        except OSError:
-            return {"name": path.name, "type": "error", "content": "(Error reading file)"}
+        b64 = base64.b64encode(raw).decode("ascii")
         return {
             "name": path.name,
             "type": "xlsx",
@@ -197,11 +256,7 @@ def embed_file(path: Path) -> dict:
         }
     else:
         # Binary / unknown — base64 download link
-        try:
-            raw = path.read_bytes()
-            b64 = base64.b64encode(raw).decode("ascii")
-        except OSError:
-            return {"name": path.name, "type": "error", "content": "(Error reading file)"}
+        b64 = base64.b64encode(raw).decode("ascii")
         return {
             "name": path.name,
             "type": "binary",
@@ -276,7 +331,8 @@ def generate_html(
     if benchmark:
         embedded["benchmark"] = benchmark
 
-    data_json = json.dumps(embedded)
+    # Prevent the HTML parser from treating workspace data as a closing script tag.
+    data_json = json.dumps(embedded).replace("<", "\\u003c")
 
     return template.replace("/*__EMBEDDED_DATA__*/", f"const EMBEDDED_DATA = {data_json};")
 
@@ -447,8 +503,8 @@ def main() -> None:
         port = server.server_address[1]
 
     url = f"http://localhost:{port}"
-    print(f"\n  Eval Viewer")
-    print(f"  ─────────────────────────────────")
+    print("\n  Eval Viewer")
+    print("  ─────────────────────────────────")
     print(f"  URL:       {url}")
     print(f"  Workspace: {workspace}")
     print(f"  Feedback:  {feedback_path}")
@@ -456,7 +512,7 @@ def main() -> None:
         print(f"  Previous:  {args.previous_workspace} ({len(previous)} runs)")
     if benchmark_path:
         print(f"  Benchmark: {benchmark_path}")
-    print(f"\n  Press Ctrl+C to stop.\n")
+    print("\n  Press Ctrl+C to stop.\n")
 
     webbrowser.open(url)
 

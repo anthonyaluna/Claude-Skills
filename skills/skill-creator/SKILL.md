@@ -246,6 +246,8 @@ Put each with_skill version before its baseline counterpart.
 
    **Cowork / headless environments:** If `webbrowser.open()` is not available or the environment has no display, use `--static <output_path>` to write a standalone HTML file instead of starting a server. Feedback will be downloaded as a `feedback.json` file when the user clicks "Submit All Reviews". After download, copy `feedback.json` into the workspace directory for the next iteration to pick up.
 
+   **Output limits:** The viewer embeds outputs up to 5 MiB per file, 100 files per run, and 25 MiB / 1,000 files across a workspace scan. It marks capped output as omitted; inspect source files directly when you need complete coverage.
+
 Note: please use generate_review.py to create the viewer; there's no need to write custom HTML.
 
 5. **Tell the user** something like: "I've opened the results in your browser. There are two tabs — 'Outputs' lets you click through each test case and leave feedback, 'Benchmark' shows the quantitative comparison. When you're done, come back here and let me know."
@@ -363,6 +365,7 @@ Present the eval set to the user for review using the HTML template:
 
 1. Read the template from `assets/eval_review.html`
 2. Replace the placeholders:
+   - Security: serialize the eval array with json.dumps(items).replace("<", "\\u003c") before inserting it as a JavaScript expression. HTML-escape the skill name and description with html.escape(value, quote=True) before inserting them into the text placeholders. This prevents data from breaking out of the script or HTML text context.
    - `__EVAL_DATA_PLACEHOLDER__` → the JSON array of eval items (no quotes around it — it's a JS variable assignment)
    - `__SKILL_NAME_PLACEHOLDER__` → the skill's name
    - `__SKILL_DESCRIPTION_PLACEHOLDER__` → the skill's current description
