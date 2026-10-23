@@ -19,6 +19,7 @@ import mimetypes
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -53,6 +54,74 @@ MAX_WORKSPACE_OUTPUT_FILES = 1000
 MAX_WORKSPACE_OUTPUT_BYTES = 25 * 1024 * 1024
 
 
+def _is_link_or_reparse_point(path: Path) -> bool:
+    """Return whether a path is a symlink, junction, or other reparse point."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        # If metadata cannot be inspected, fail closed instead of following it.
+        return True
+
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(getattr(info, "st_file_attributes", 0) & reparse_flag)
+
+
+def _safe_workspace_path(root: Path, path: Path) -> Path | None:
+    """Return a workspace descendant only when no component is a link."""
+    try:
+        root = Path(os.path.abspath(root))
+        path = Path(path)
+        if not path.is_absolute():
+            path = root / path
+        candidate = Path(os.path.abspath(path))
+        relative = candidate.relative_to(root)
+    except (OSError, ValueError):
+        return None
+
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if _is_link_or_reparse_point(current):
+            return None
+    return candidate
+
+
+def _open_workspace_file(root: Path, path: Path, flags: int, mode: int = 0o600) -> int:
+    """Open a workspace file and reject link swaps between validation and open."""
+    safe_path = _safe_workspace_path(root, path)
+    if safe_path is None:
+        raise OSError("Workspace path contains a link or escapes its root")
+
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    file_descriptor = os.open(safe_path, flags, mode)
+    try:
+        if _safe_workspace_path(root, safe_path) is None:
+            raise OSError("Workspace path changed while it was being opened")
+        path_info = safe_path.lstat()
+        descriptor_info = os.fstat(file_descriptor)
+        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        if (
+            stat.S_ISLNK(path_info.st_mode)
+            or getattr(path_info, "st_file_attributes", 0) & reparse_flag
+            or not stat.S_ISREG(descriptor_info.st_mode)
+            or (
+                not getattr(os, "O_NOFOLLOW", 0)
+                and (not path_info.st_dev or not path_info.st_ino)
+            )
+            or (path_info.st_dev, path_info.st_ino)
+            != (descriptor_info.st_dev, descriptor_info.st_ino)
+        ):
+            raise OSError("Workspace file changed while it was being opened")
+        return file_descriptor
+    except OSError:
+        os.close(file_descriptor)
+        raise
+
+
 def get_mime_type(path: Path) -> str:
     ext = path.suffix.lower()
     if ext in MIME_OVERRIDES:
@@ -63,6 +132,7 @@ def get_mime_type(path: Path) -> str:
 
 def find_runs(workspace: Path) -> list[dict]:
     """Recursively find directories that contain an outputs/ subdirectory."""
+    workspace = Path(workspace).resolve()
     runs: list[dict] = []
     budget = {
         "remaining_bytes": MAX_WORKSPACE_OUTPUT_BYTES,
@@ -79,15 +149,19 @@ def _find_runs_recursive(
     runs: list[dict],
     budget: dict[str, int],
 ) -> None:
+    safe_current = _safe_workspace_path(root, current)
     if (
-        not current.is_dir()
+        safe_current is None
+        or not safe_current.is_dir()
         or budget["remaining_files"] <= 0
         or budget["remaining_bytes"] <= 0
     ):
         return
+    current = safe_current
 
     outputs_dir = current / "outputs"
-    if outputs_dir.is_dir():
+    safe_outputs_dir = _safe_workspace_path(root, outputs_dir)
+    if safe_outputs_dir is not None and safe_outputs_dir.is_dir():
         run = build_run(root, current, budget)
         if run:
             runs.append(run)
@@ -97,8 +171,9 @@ def _find_runs_recursive(
     for child in sorted(current.iterdir()):
         if budget["remaining_files"] <= 0 or budget["remaining_bytes"] <= 0:
             break
-        if child.is_dir() and child.name not in skip:
-            _find_runs_recursive(root, child, runs, budget)
+        safe_child = _safe_workspace_path(root, child)
+        if safe_child is not None and child.name not in skip and safe_child.is_dir():
+            _find_runs_recursive(root, safe_child, runs, budget)
 
 
 def build_run(
@@ -107,14 +182,23 @@ def build_run(
     budget: dict[str, int] | None = None,
 ) -> dict | None:
     """Build a run dict with prompt, outputs, and grading data."""
+    root = Path(root).resolve()
+    safe_run_dir = _safe_workspace_path(root, run_dir)
+    if safe_run_dir is None or not safe_run_dir.is_dir():
+        return None
+    run_dir = safe_run_dir
+
     prompt = ""
     eval_id = None
 
     # Try eval_metadata.json
     for candidate in [run_dir / "eval_metadata.json", run_dir.parent / "eval_metadata.json"]:
-        if candidate.exists():
+        safe_candidate = _safe_workspace_path(root, candidate)
+        if safe_candidate is not None and safe_candidate.is_file():
             try:
-                metadata = json.loads(candidate.read_text())
+                file_descriptor = _open_workspace_file(root, safe_candidate, os.O_RDONLY)
+                with os.fdopen(file_descriptor, "r", encoding="utf-8") as metadata_file:
+                    metadata = json.load(metadata_file)
                 prompt = metadata.get("prompt", "")
                 eval_id = metadata.get("eval_id")
             except (json.JSONDecodeError, OSError):
@@ -125,9 +209,16 @@ def build_run(
     # Fall back to transcript.md
     if not prompt:
         for candidate in [run_dir / "transcript.md", run_dir / "outputs" / "transcript.md"]:
-            if candidate.exists():
+            safe_candidate = _safe_workspace_path(root, candidate)
+            if safe_candidate is not None and safe_candidate.is_file():
                 try:
-                    text = candidate.read_text()
+                    file_descriptor = _open_workspace_file(
+                        root, safe_candidate, os.O_RDONLY
+                    )
+                    with os.fdopen(
+                        file_descriptor, "r", encoding="utf-8"
+                    ) as transcript_file:
+                        text = transcript_file.read()
                     match = re.search(r"## Eval Prompt\n\n([\s\S]*?)(?=\n##|$)", text)
                     if match:
                         prompt = match.group(1).strip()
@@ -145,11 +236,13 @@ def build_run(
     outputs_dir = run_dir / "outputs"
     output_files: list[dict] = []
     output_limit_reached = False
-    if outputs_dir.is_dir():
+    safe_outputs_dir = _safe_workspace_path(root, outputs_dir)
+    if safe_outputs_dir is not None and safe_outputs_dir.is_dir():
         candidates = []
-        for f in outputs_dir.iterdir():
-            if f.is_file() and f.name not in METADATA_FILES:
-                candidates.append(f)
+        for f in safe_outputs_dir.iterdir():
+            safe_file = _safe_workspace_path(root, f)
+            if safe_file is not None and safe_file.is_file() and f.name not in METADATA_FILES:
+                candidates.append(safe_file)
                 if len(candidates) > MAX_OUTPUT_FILES_PER_RUN:
                     output_limit_reached = True
                     break
@@ -159,7 +252,7 @@ def build_run(
             ):
                 output_limit_reached = True
                 break
-            output_files.append(embed_file(f, budget))
+            output_files.append(embed_file(f, budget, root=root))
         if budget and (
             budget["remaining_files"] <= 0 or budget["remaining_bytes"] <= 0
         ):
@@ -174,9 +267,12 @@ def build_run(
     # Load grading if present
     grading = None
     for candidate in [run_dir / "grading.json", run_dir.parent / "grading.json"]:
-        if candidate.exists():
+        safe_candidate = _safe_workspace_path(root, candidate)
+        if safe_candidate is not None and safe_candidate.is_file():
             try:
-                grading = json.loads(candidate.read_text())
+                file_descriptor = _open_workspace_file(root, safe_candidate, os.O_RDONLY)
+                with os.fdopen(file_descriptor, "r", encoding="utf-8") as grading_file:
+                    grading = json.load(grading_file)
             except (json.JSONDecodeError, OSError):
                 pass
             if grading:
@@ -191,8 +287,18 @@ def build_run(
     }
 
 
-def embed_file(path: Path, budget: dict[str, int] | None = None) -> dict:
+def embed_file(
+    path: Path,
+    budget: dict[str, int] | None = None,
+    root: Path | None = None,
+) -> dict:
     """Read a file and return an embedded representation."""
+    if root is not None:
+        safe_path = _safe_workspace_path(root, path)
+        if safe_path is None or not safe_path.is_file():
+            return {"name": path.name, "type": "error", "content": "(Unsafe output path)"}
+        path = safe_path
+
     ext = path.suffix.lower()
     mime = get_mime_type(path)
 
@@ -208,7 +314,12 @@ def embed_file(path: Path, budget: dict[str, int] | None = None) -> dict:
         budget["remaining_files"] -= 1
 
     try:
-        with path.open("rb") as output_file:
+        file_descriptor = (
+            _open_workspace_file(root, path, os.O_RDONLY)
+            if root is not None
+            else os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+        )
+        with os.fdopen(file_descriptor, "rb") as output_file:
             raw = output_file.read(available_bytes + 1)
     except OSError:
         return {"name": path.name, "type": "error", "content": "(Error reading file)"}
@@ -274,10 +385,15 @@ def load_previous_iteration(workspace: Path) -> dict[str, dict]:
 
     # Load feedback
     feedback_map: dict[str, str] = {}
-    feedback_path = workspace / "feedback.json"
-    if feedback_path.exists():
+    workspace = Path(workspace).resolve()
+    feedback_path = _safe_workspace_path(workspace, workspace / "feedback.json")
+    if feedback_path is not None and feedback_path.is_file():
         try:
-            data = json.loads(feedback_path.read_text())
+            file_descriptor = _open_workspace_file(
+                workspace, feedback_path, os.O_RDONLY
+            )
+            with os.fdopen(file_descriptor, "r", encoding="utf-8") as feedback_file:
+                data = json.load(feedback_file)
             feedback_map = {
                 r["run_id"]: r["feedback"]
                 for r in data.get("reviews", [])
@@ -404,8 +520,18 @@ class ReviewHandler(BaseHTTPRequestHandler):
             self.wfile.write(content)
         elif self.path == "/api/feedback":
             data = b"{}"
-            if self.feedback_path.exists():
-                data = self.feedback_path.read_bytes()
+            safe_feedback_path = _safe_workspace_path(
+                self.workspace, self.feedback_path
+            )
+            if safe_feedback_path is not None and safe_feedback_path.is_file():
+                try:
+                    file_descriptor = _open_workspace_file(
+                        self.workspace, safe_feedback_path, os.O_RDONLY
+                    )
+                    with os.fdopen(file_descriptor, "rb") as feedback_file:
+                        data = feedback_file.read()
+                except OSError:
+                    pass
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
@@ -416,13 +542,35 @@ class ReviewHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if self.path == "/api/feedback":
+            safe_feedback_path = _safe_workspace_path(
+                self.workspace, self.feedback_path
+            )
+            if safe_feedback_path is None:
+                self.send_error(403, "Feedback path must not contain links")
+                return
+
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length)
             try:
                 data = json.loads(body)
                 if not isinstance(data, dict) or "reviews" not in data:
                     raise ValueError("Expected JSON object with 'reviews' key")
-                self.feedback_path.write_text(json.dumps(data, indent=2) + "\n")
+                file_descriptor = _open_workspace_file(
+                    self.workspace,
+                    safe_feedback_path,
+                    os.O_WRONLY | os.O_CREAT,
+                )
+                try:
+                    os.ftruncate(file_descriptor, 0)
+                    payload = (json.dumps(data, indent=2) + "\n").encode("utf-8")
+                    remaining = memoryview(payload)
+                    while remaining:
+                        written = os.write(file_descriptor, remaining)
+                        if written <= 0:
+                            raise OSError("Could not finish writing feedback")
+                        remaining = remaining[written:]
+                finally:
+                    os.close(file_descriptor)
                 resp = b'{"ok":true}'
                 self.send_response(200)
             except (json.JSONDecodeError, OSError, ValueError) as e:
