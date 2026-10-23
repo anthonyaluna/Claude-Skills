@@ -6,11 +6,11 @@
 
 | Type | Who runs it | How it works |
 |---|---|---|
-| **Prebuilt Claude Agent tools** (`agent_toolset_20260401`) | Anthropic, on the session's container (for `cloud` envs; for `self_hosted`, **your** worker supplies and runs them — see `shared/managed-agents-self-hosted-sandboxes.md`) | File ops, bash, web search, etc. Enable all at once or configure individually with `enabled: true/false`. |
+| **Prebuilt Claude Agent tools** (`agent_toolset_20260401`) | Anthropic, on the session's container (for `cloud` envs; for `self_hosted`, **your** worker supplies and runs them — see `shared/managed-agents-self-hosted-sandboxes.md`) | File ops, bash, web search, etc. Disable the defaults and enable only the tools required for this agent's task. |
 | **MCP tools** (`mcp_toolset`) | Anthropic's orchestration layer | Capabilities exposed by connected MCP servers. Grant access per-server via the toolset. |
 | **Custom tools** | **You** — your application handles the call and returns results | Agent emits a `agent.custom_tool_use` event, session goes `idle`, you send back a `user.custom_tool_result` event. |
 
-**Recommendation:** Enable all prebuilt tools via `agent_toolset_20260401`, then disable individually as needed.
+**Recommendation:** Start with `default_config.enabled: false`, then opt in only the tools this agent needs. A bare toolset enables all eight tools, and the agent toolset's default permission policy is `always_allow`.
 
 **Versioning:** The toolset is a versioned, static resource. When underlying tools change, a new toolset version is created (hence `_20260401`) so you always know exactly what you're getting.
 
@@ -29,28 +29,43 @@ The `agent_toolset_20260401` provides these built-in tools:
 | `web_fetch` | Fetch content from a URL |
 | `web_search` | Search the web for information |
 
-Enable the full toolset:
+Example: a read-only file review agent that needs only `read`, `glob`, and `grep`:
 
 ```json
 {
-  "tools": [
-    { "type": "agent_toolset_20260401" }
-  ]
+  "tools": [{
+    "type": "agent_toolset_20260401",
+    "default_config": {
+      "enabled": false,
+      "permission_policy": { "type": "auto" }
+    },
+    "configs": [
+      { "name": "read", "enabled": true },
+      { "name": "glob", "enabled": true },
+      { "name": "grep", "enabled": true }
+    ]
+  }]
 }
 ```
 
+Add tools only when the task requires them. For example, enable `bash` only for a task that needs shell execution; use `always_ask` if a person must approve every command. `auto` evaluates each call and may run it without a person seeing it, so it is not a human checkpoint.
+
 ### Per-Tool Configuration
 
-Override defaults for individual tools. This example enables everything except bash:
+Override defaults for individual tools. This example disables the toolset first, then enables only `read` and `grep`:
 
 ```json
 {
   "tools": [
     {
       "type": "agent_toolset_20260401",
-      "default_config": { "enabled": true },
+      "default_config": {
+        "enabled": false,
+        "permission_policy": { "type": "auto" }
+      },
       "configs": [
-        { "name": "bash", "enabled": false }
+        { "name": "read", "enabled": true },
+        { "name": "grep", "enabled": true }
       ]
     }
   ]
@@ -69,30 +84,34 @@ Control when server-executed tools (agent toolset + MCP) run automatically vs wa
 
 | Policy | Behavior |
 |---|---|
-| `always_allow` | Tool executes automatically (default) |
-| `always_ask` | Session emits `session.status_idle` and pauses until you send a `tool_confirmation` event |
+| `always_allow` | Tool executes automatically; default for the agent toolset |
+| `always_ask` | Session emits `session.status_idle` and pauses until you send a `user.tool_confirmation` event; default for MCP toolsets |
+| `auto` | Server evaluates each call and runs it, denies it, or pauses for approval; it may run a call without a person seeing it |
 
 ```json
 {
   "type": "agent_toolset_20260401",
   "default_config": {
-    "enabled": true,
-    "permission_policy": { "type": "always_allow" }
+    "enabled": false,
+    "permission_policy": { "type": "auto" }
   },
   "configs": [
-    { "name": "bash", "permission_policy": { "type": "always_ask" } }
+    { "name": "read", "enabled": true },
+    { "name": "bash", "enabled": true, "permission_policy": { "type": "always_ask" } }
   ]
 }
 ```
 
-**Responding to `always_ask`:** Send a `user.tool_confirmation` event with `tool_use_id` from the triggering `agent_tool_use`/`mcp_tool_use` event:
+The API's agent-toolset default is `always_allow`; do not rely on an omitted policy to require review. Use `always_ask` when a person must approve every call. Use `auto` only when server-side evaluation may run calls it judges safe without human review. For current policy details and supported SDK versions, see the official [Managed Agents permission policies](https://platform.claude.com/docs/en/managed-agents/permission-policies).
+
+**Responding to `always_ask`:** Inspect the originating agent, exact tool, and full input, then obtain an explicit operator decision (or apply a strict, pre-reviewed allowlist). A pending event is not approval. If review is missing, errors, times out, or returns an unknown decision, deny by default. Send a `user.tool_confirmation` event with `tool_use_id` from the triggering `agent.tool_use`/`agent.mcp_tool_use` event:
 
 ```json
-{ "type": "tool_confirmation", "tool_use_id": "sevt_abc123", "result": "allow" }
-{ "type": "tool_confirmation", "tool_use_id": "sevt_def456", "result": "deny", "message": "Read .env.example instead" }
+{ "type": "user.tool_confirmation", "tool_use_id": "sevt_abc123", "result": "allow" }
+{ "type": "user.tool_confirmation", "tool_use_id": "sevt_def456", "result": "deny", "deny_message": "Read .env.example instead" }
 ```
 
-The optional `message` on a deny is delivered to the agent so it can adjust its approach.
+The optional `deny_message` on a deny is delivered to the agent so it can adjust its approach.
 
 To enable only specific tools, flip the default off and opt-in per tool:
 
@@ -121,7 +140,7 @@ Custom tools are executed by **your application**, not Anthropic. The flow:
 4. You send back a `user.custom_tool_result` event with the output
 5. Session resumes `running`
 
-No permission policy needed — you're the one executing.
+Permission policies do not govern custom tools — your application decides whether to execute them. Treat every custom-tool input as model-controlled, validate and authorize it in the application, and expose only fixed-purpose operations with least-privilege credentials.
 
 ```json
 {

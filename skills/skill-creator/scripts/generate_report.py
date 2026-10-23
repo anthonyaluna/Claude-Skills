@@ -13,11 +13,15 @@ import sys
 from pathlib import Path
 
 
+def escape_text(value: object) -> str:
+    """Escape untrusted values before inserting them into HTML text contexts."""
+    return html.escape(str(value), quote=True)
+
+
 def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") -> str:
     """Generate HTML report from loop output data. If auto_refresh is True, adds a meta refresh tag."""
     history = data.get("history", [])
-    holdout = data.get("holdout", 0)
-    title_prefix = html.escape(skill_name + " \u2014 ") if skill_name else ""
+    title_prefix = escape_text(skill_name + " \u2014 ") if skill_name else ""
 
     # Get all unique queries from train and test sets, with should_trigger info
     train_queries: list[dict] = []
@@ -154,13 +158,12 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
 
     # Summary section
     best_test_score = data.get('best_test_score')
-    best_train_score = data.get('best_train_score')
     html_parts.append(f"""
     <div class="summary">
-        <p><strong>Original:</strong> {html.escape(data.get('original_description', 'N/A'))}</p>
-        <p class="best"><strong>Best:</strong> {html.escape(data.get('best_description', 'N/A'))}</p>
-        <p><strong>Best Score:</strong> {data.get('best_score', 'N/A')} {'(test)' if best_test_score else '(train)'}</p>
-        <p><strong>Iterations:</strong> {data.get('iterations_run', 0)} | <strong>Train:</strong> {data.get('train_size', '?')} | <strong>Test:</strong> {data.get('test_size', '?')}</p>
+        <p><strong>Original:</strong> {escape_text(data.get('original_description', 'N/A'))}</p>
+        <p class="best"><strong>Best:</strong> {escape_text(data.get('best_description', 'N/A'))}</p>
+        <p><strong>Best Score:</strong> {escape_text(data.get('best_score', 'N/A'))} {'(test)' if best_test_score else '(train)'}</p>
+        <p><strong>Iterations:</strong> {escape_text(data.get('iterations_run', 0))} | <strong>Train:</strong> {escape_text(data.get('train_size', '?'))} | <strong>Test:</strong> {escape_text(data.get('test_size', '?'))}</p>
     </div>
 """)
 
@@ -190,12 +193,12 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
     # Add column headers for train queries
     for qinfo in train_queries:
         polarity = "positive-col" if qinfo["should_trigger"] else "negative-col"
-        html_parts.append(f'                <th class="{polarity}">{html.escape(qinfo["query"])}</th>\n')
+        html_parts.append(f'                <th class="{polarity}">{escape_text(qinfo["query"])}</th>\n')
 
     # Add column headers for test queries (different color)
     for qinfo in test_queries:
         polarity = "positive-col" if qinfo["should_trigger"] else "negative-col"
-        html_parts.append(f'                <th class="test-col {polarity}">{html.escape(qinfo["query"])}</th>\n')
+        html_parts.append(f'                <th class="test-col {polarity}">{escape_text(qinfo["query"])}</th>\n')
 
     html_parts.append("""            </tr>
         </thead>
@@ -211,10 +214,6 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
     # Add rows for each iteration
     for h in history:
         iteration = h.get("iteration", "?")
-        train_passed = h.get("train_passed", h.get("passed", 0))
-        train_total = h.get("train_total", h.get("total", 0))
-        test_passed = h.get("test_passed")
-        test_total = h.get("test_total")
         description = h.get("description", "")
         train_results = h.get("train_results", h.get("results", []))
         test_results = h.get("test_results", [])
@@ -256,10 +255,10 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
         row_class = "best-row" if iteration == best_iter else ""
 
         html_parts.append(f"""            <tr class="{row_class}">
-                <td>{iteration}</td>
-                <td><span class="score {train_class}">{train_correct}/{train_runs}</span></td>
-                <td><span class="score {test_class}">{test_correct}/{test_runs}</span></td>
-                <td class="description">{html.escape(description)}</td>
+                <td>{escape_text(iteration)}</td>
+                <td><span class="score {train_class}">{escape_text(train_correct)}/{escape_text(train_runs)}</span></td>
+                <td><span class="score {test_class}">{escape_text(test_correct)}/{escape_text(test_runs)}</span></td>
+                <td class="description">{escape_text(description)}</td>
 """)
 
         # Add result for each train query
@@ -272,7 +271,7 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
             icon = "✓" if did_pass else "✗"
             css_class = "pass" if did_pass else "fail"
 
-            html_parts.append(f'                <td class="result {css_class}">{icon}<span class="rate">{triggers}/{runs}</span></td>\n')
+            html_parts.append(f'                <td class="result {css_class}">{icon}<span class="rate">{escape_text(triggers)}/{escape_text(runs)}</span></td>\n')
 
         # Add result for each test query (with different background)
         for qinfo in test_queries:
@@ -284,7 +283,7 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
             icon = "✓" if did_pass else "✗"
             css_class = "pass" if did_pass else "fail"
 
-            html_parts.append(f'                <td class="result test-result {css_class}">{icon}<span class="rate">{triggers}/{runs}</span></td>\n')
+            html_parts.append(f'                <td class="result test-result {css_class}">{icon}<span class="rate">{escape_text(triggers)}/{escape_text(runs)}</span></td>\n')
 
         html_parts.append("            </tr>\n")
 

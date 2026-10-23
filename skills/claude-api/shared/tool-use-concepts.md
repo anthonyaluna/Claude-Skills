@@ -154,7 +154,7 @@ The response contains interleaved text and tool result blocks:
 - `bash_code_execution_tool_result` — Code execution output (check `return_code` for success/failure)
 - `text_editor_code_execution_tool_result` — File operation results
 
-> **Security:** Always sanitize filenames with `os.path.basename()` / `path.basename()` before writing downloaded files to disk to prevent path traversal attacks. Write files to a dedicated output directory.
+> **Security:** Treat service-provided filenames as untrusted metadata, not filesystem paths. Write downloads into a private, unique output directory using locally generated filenames, and display the original name only as metadata. If preserving a remote filename is necessary, validate both POSIX and Windows path separators and use exclusive file creation to prevent traversal and symlink overwrite.
 
 ---
 

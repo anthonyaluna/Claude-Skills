@@ -33,7 +33,7 @@ environment = client.beta.environments.create(
   name: "my-dev-env",
   config: {
     type: "cloud",
-    networking: {type: "unrestricted"}
+    networking: {type: "limited"}
   }
 )
 puts "Environment ID: #{environment.id}" # env_...
@@ -47,13 +47,14 @@ puts "Environment ID: #{environment.id}" # env_...
 
 ### Minimal
 
+This example creates an agent with no built-in tools. Add only the task-specific tools it needs; see `shared/managed-agents-tools.md` for the deny-by-default allowlist pattern.
+
 ```ruby
 # 1. Create the agent (reusable, versioned)
 agent = client.beta.agents.create(
   name: "Coding Assistant",
   model: :"claude-opus-4-8",
   system_: "You are a helpful coding assistant.",
-  tools: [{type: "agent_toolset_20260401"}]
 )
 
 # 2. Start a session
@@ -256,6 +257,8 @@ client.beta.sessions.delete(session.id)
 
 ## MCP Server Integration
 
+With `limited` networking, add only the MCP server's host (`api.githubcopilot.com`) to the environment's `allowed_hosts` before creating a session.
+
 ```ruby
 # Agent declares MCP server (no auth here — auth goes in a vault)
 agent = client.beta.agents.create(
@@ -269,7 +272,6 @@ agent = client.beta.agents.create(
     }
   ],
   tools: [
-    {type: "agent_toolset_20260401"},
     {type: "mcp_toolset", mcp_server_name: "github"}
   ]
 )
