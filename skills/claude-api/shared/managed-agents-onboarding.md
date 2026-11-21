@@ -45,7 +45,7 @@ Three rounds. Batch the questions in each round; don't ask them one at a time.
 
 | Type | What it is | How to guide |
 |---|---|---|
-| **Prebuilt Claude Agent tools** (`agent_toolset_20260401`) | Ready-to-use: `bash`, `read`, `write`, `edit`, `glob`, `grep`, `web_fetch`, `web_search`. Enable all at once, or individually via `enabled: true/false`. | Recommend enabling the full toolset. List the 8 tools so the user knows what they're getting. Full detail: `shared/managed-agents-tools.md` → Agent Toolset. |
+| **Prebuilt Claude Agent tools** (`agent_toolset_20260401`) | Ready-to-use: `bash`, `read`, `write`, `edit`, `glob`, `grep`, `web_fetch`, `web_search`. Disable by default, then enable only the tools this job needs. | Ask which task-specific tools are required. Explain that a bare toolset enables all eight tools with `always_allow` by default. Full detail: `shared/managed-agents-tools.md` → Agent Toolset. |
 | **MCP tools** | Third-party integrations (GitHub, Linear, Asana, etc.) via `mcp_toolset`. Credentials live in a vault, not inline. | Ask which services. For each, walk through MCP server URL + vault credentials. Full detail: `shared/managed-agents-tools.md` → MCP Servers + Vaults. |
 | **Custom tools** | The user's own app handles these tool calls — agent fires `agent.custom_tool_use`, the app sends a result message back. | Ask for each tool: name, description, input schema. The app code that handles the event is *their* code — don't generate it. Full detail: `shared/managed-agents-tools.md` → Custom Tools. |
 
@@ -74,7 +74,7 @@ Emit as `resources: [{type: "file", file_id, mount_path}]`. Max 999 file resourc
 - [ ] Name?
 - [ ] Job (one or two sentences — becomes the system prompt)?
 - [ ] **What does "done" look like?** Push for concrete, checkable success criteria — not "a good report" but "a CSV with a numeric `price` column per SKU." Explicit criteria give the agent a clear target and let you verify the result; vague ones leave it guessing what "done" means. If they're gradeable, plan to wire an **Outcome** in §2 so the harness grades-and-revises against them. See `shared/managed-agents-outcomes.md`.
-- [ ] Networking: unrestricted internet from the container, or lock egress to specific hosts? (If locked, MCP server domains must be in `allowed_hosts` or tools silently fail.)
+- [ ] Networking: start with `limited` and deny-by-default egress. Add only the exact hosts required by this job; leave package-manager and MCP-server bypasses off unless needed. (MCP server hosts must be allowed by the environment.) Treat `unrestricted` as an explicit exception, not a quickstart default.
 - [ ] Model? (default `claude-opus-4-8`)
 
 ---
@@ -107,7 +107,7 @@ Walk the stated job clause by clause. For each action the agent must take, confi
 | Gap class | Check | If missing |
 |---|---|---|
 | **Tool / integration** (most catchable upfront — config is statically inspectable) | Every verb in the job maps to an enabled tool or MCP server. "Triage tickets" → a ticketing MCP server; "open a PR" → GitHub MCP server (a `github_repository` mount alone can't open PRs); "search the web" → `web_search` enabled in the toolset. | Add the tool/MCP server in §Round A, or cut the ask from the job. |
-| **Credential / access** | Every MCP server has a vault credential attached (§2). Every external host the job touches is reachable — networking `unrestricted`, or the host is in `allowed_hosts`. | Create/attach the vault; widen `allowed_hosts`. These don't fail until runtime — the smoke-test in §4 is how you surface them cheaply. |
+| **Credential / access** | Every MCP server has a vault credential attached (§2). Each required external host is listed in the `limited` environment's `allowed_hosts`. | Create/attach the vault and add only the specific required host after review. These don't fail until runtime — the smoke-test in §4 is how you surface them cheaply. |
 | **Data** | Every file, dataset, or repo the job references is mounted as a `resource` (file, `github_repository`, or memory store). | Upload + mount it in §Round B, or tell the agent where to fetch it from. |
 | **Prompt quality / criteria** | The job is specific enough to act on, and "done" is checkable (§Round C). | Tighten the job; wire an Outcome. |
 

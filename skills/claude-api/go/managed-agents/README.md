@@ -40,7 +40,7 @@ environment, err := client.Beta.Environments.New(ctx, anthropic.BetaEnvironmentN
     Name: "my-dev-env",
     Config: anthropic.BetaCloudConfigParams{
         Networking: anthropic.BetaCloudConfigParamsNetworkingUnion{
-            OfUnrestricted: &anthropic.UnrestrictedNetworkParam{},
+            OfLimited: &anthropic.BetaLimitedNetworkParams{Type: "limited"},
         },
     },
 })
@@ -58,6 +58,8 @@ fmt.Println(environment.ID) // env_...
 
 ### Minimal
 
+This example creates an agent with no built-in tools. Add only the task-specific tools it needs; see `shared/managed-agents-tools.md` for the deny-by-default allowlist pattern.
+
 ```go
 // 1. Create the agent (reusable, versioned)
 agent, err := client.Beta.Agents.New(ctx, anthropic.BetaAgentNewParams{
@@ -67,11 +69,6 @@ agent, err := client.Beta.Agents.New(ctx, anthropic.BetaAgentNewParams{
         Type: anthropic.BetaManagedAgentsModelConfigParamsTypeModelConfig,
     },
     System: anthropic.String("You are a helpful coding assistant."),
-    Tools: []anthropic.BetaAgentNewParamsToolUnion{{
-        OfAgentToolset20260401: &anthropic.BetaManagedAgentsAgentToolset20260401Params{
-            Type: anthropic.BetaManagedAgentsAgentToolset20260401ParamsTypeAgentToolset20260401,
-        },
-    }},
 })
 if err != nil {
     panic(err)
@@ -389,11 +386,6 @@ agent, err := client.Beta.Agents.New(ctx, anthropic.BetaAgentNewParams{
         URL:  "https://api.githubcopilot.com/mcp/",
     }},
     Tools: []anthropic.BetaAgentNewParamsToolUnion{
-        {
-            OfAgentToolset20260401: &anthropic.BetaManagedAgentsAgentToolset20260401Params{
-                Type: anthropic.BetaManagedAgentsAgentToolset20260401ParamsTypeAgentToolset20260401,
-            },
-        },
         {
             OfMCPToolset: &anthropic.BetaManagedAgentsMCPToolsetParams{
                 Type:          anthropic.BetaManagedAgentsMCPToolsetParamsTypeMCPToolset,

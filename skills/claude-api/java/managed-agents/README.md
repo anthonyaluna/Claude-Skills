@@ -29,12 +29,12 @@ var client = AnthropicOkHttpClient.fromEnv();
 ```java
 import com.anthropic.models.beta.environments.BetaCloudConfigParams;
 import com.anthropic.models.beta.environments.EnvironmentCreateParams;
-import com.anthropic.models.beta.environments.UnrestrictedNetwork;
+import com.anthropic.models.beta.environments.BetaLimitedNetworkParams;
 
 var environment = client.beta().environments().create(EnvironmentCreateParams.builder()
     .name("my-dev-env")
     .config(BetaCloudConfigParams.builder()
-        .networking(UnrestrictedNetwork.builder().build())
+        .networking(BetaLimitedNetworkParams.builder().build())
         .build())
     .build());
 System.out.println("Environment ID: " + environment.id()); // env_...
@@ -48,9 +48,10 @@ System.out.println("Environment ID: " + environment.id()); // env_...
 
 ### Minimal
 
+This example creates an agent with no built-in tools. Add only the task-specific tools it needs; see `shared/managed-agents-tools.md` for the deny-by-default allowlist pattern.
+
 ```java
 import com.anthropic.models.beta.agents.AgentCreateParams;
-import com.anthropic.models.beta.agents.BetaManagedAgentsAgentToolset20260401Params;
 import com.anthropic.models.beta.sessions.BetaManagedAgentsAgentParams;
 import com.anthropic.models.beta.sessions.SessionCreateParams;
 
@@ -59,9 +60,6 @@ var agent = client.beta().agents().create(AgentCreateParams.builder()
     .name("Coding Assistant")
     .model("claude-opus-4-8")
     .system("You are a helpful coding assistant.")
-    .addTool(BetaManagedAgentsAgentToolset20260401Params.builder()
-        .type(BetaManagedAgentsAgentToolset20260401Params.Type.AGENT_TOOLSET_20260401)
-        .build())
     .build());
 
 // 2. Start a session
@@ -300,9 +298,6 @@ var agent = client.beta().agents().create(AgentCreateParams.builder()
         .type(BetaManagedAgentsUrlmcpServerParams.Type.URL)
         .name("github")
         .url("https://api.githubcopilot.com/mcp/")
-        .build())
-    .addTool(BetaManagedAgentsAgentToolset20260401Params.builder()
-        .type(BetaManagedAgentsAgentToolset20260401Params.Type.AGENT_TOOLSET_20260401)
         .build())
     .addTool(BetaManagedAgentsMcpToolsetParams.builder()
         .type(BetaManagedAgentsMcpToolsetParams.Type.MCP_TOOLSET)

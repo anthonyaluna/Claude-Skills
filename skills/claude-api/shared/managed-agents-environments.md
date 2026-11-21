@@ -10,23 +10,21 @@ Creating a session requires an `environment_id`. Environments are **reusable con
 
 | Network Policy   | Description                                                   |
 | ---------------- | ------------------------------------------------------------- |
-| `unrestricted`   | Full egress (except legal blocklist)                          |
-| `limited`        | Deny-by-default; opt in via `allowed_hosts` / `allow_package_managers` / `allow_mcp_servers` |
+| `unrestricted`   | Full egress (except legal blocklist); use only as an explicit, reviewed exception |
+| `limited`        | Recommended starting point; deny-by-default and opt in only to required hosts |
 
 ```json
 {
   "networking": {
     "type": "limited",
-    "allow_package_managers": true,
-    "allow_mcp_servers": true,
     "allowed_hosts": ["api.example.com"]
   }
 }
 ```
 
-All three `limited` fields are optional. `allow_package_managers` (default `false`) permits PyPI/npm/etc.; `allow_mcp_servers` (default `false`) permits the agent's configured MCP server endpoints without listing them in `allowed_hosts`.
+All three `limited` fields are optional. Leave `allow_package_managers` and `allow_mcp_servers` off unless the task requires them; both broaden egress beyond `allowed_hosts`. List only the exact hosts the agent needs.
 
-**MCP caveat:** Under `limited` networking, either set `allow_mcp_servers: true` or add each MCP server domain to `allowed_hosts`. Otherwise the container can't reach them and tools silently fail.
+**MCP caveat:** Under `limited` networking, leave `allow_mcp_servers` off and list each MCP server host in `allowed_hosts`. Set `allow_mcp_servers: true` only if broader MCP egress is explicitly required; otherwise the container can't reach that server.
 
 ### Creating an environment
 
@@ -37,7 +35,7 @@ const env = await client.beta.environments.create({
   name: "my_env",
   config: {
     type: "cloud",
-    networking: { type: "unrestricted" },
+    networking: { type: "limited" },
   },
 });
 ```
@@ -138,6 +136,8 @@ Repositories are attached for the lifetime of the session — to change which re
 
 **TypeScript:**
 
+This example assumes the environment uses `limited` networking with `api.githubcopilot.com` listed in `allowed_hosts`. Keep the MCP toolset at `always_ask`; keep `bash` at `always_ask` because this workflow can push to GitHub.
+
 ```ts
 // 1. Create the agent — declare GitHub MCP (no auth here)
 const agent = await client.beta.agents.create(
@@ -148,8 +148,23 @@ const agent = await client.beta.agents.create(
       { type: 'url', name: 'github', url: 'https://api.githubcopilot.com/mcp/' },
     ],
     tools: [
-      { type: 'agent_toolset_20260401', default_config: { enabled: true } },
-      { type: 'mcp_toolset', mcp_server_name: 'github' },
+      {
+        type: 'agent_toolset_20260401',
+        default_config: { enabled: false, permission_policy: { type: 'auto' } },
+        configs: [
+          { name: 'bash', enabled: true, permission_policy: { type: 'always_ask' } },
+          { name: 'read', enabled: true },
+          { name: 'write', enabled: true },
+          { name: 'edit', enabled: true },
+          { name: 'glob', enabled: true },
+          { name: 'grep', enabled: true },
+        ],
+      },
+      {
+        type: 'mcp_toolset',
+        mcp_server_name: 'github',
+        default_config: { permission_policy: { type: 'always_ask' } },
+      },
     ],
   },
 );
@@ -184,8 +199,26 @@ agent = client.beta.agents.create(
         "url": "https://api.githubcopilot.com/mcp/",
     }],
     tools=[
-        {"type": "agent_toolset_20260401", "default_config": {"enabled": True}},
-        {"type": "mcp_toolset", "mcp_server_name": "github"},
+        {
+            "type": "agent_toolset_20260401",
+            "default_config": {
+                "enabled": False,
+                "permission_policy": {"type": "auto"},
+            },
+            "configs": [
+                {"name": "bash", "enabled": True, "permission_policy": {"type": "always_ask"}},
+                {"name": "read", "enabled": True},
+                {"name": "write", "enabled": True},
+                {"name": "edit", "enabled": True},
+                {"name": "glob", "enabled": True},
+                {"name": "grep", "enabled": True},
+            ],
+        },
+        {
+            "type": "mcp_toolset",
+            "mcp_server_name": "github",
+            "default_config": {"permission_policy": {"type": "always_ask"}},
+        },
     ],
 )
 

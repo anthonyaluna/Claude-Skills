@@ -7,7 +7,10 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+try:
+    from mcp.client.streamable_http import streamablehttp_client
+except ImportError:
+    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 
 
 class MCPConnection(ABC):
@@ -59,7 +62,11 @@ class MCPConnection(ABC):
             {
                 "name": tool.name,
                 "description": tool.description,
-                "input_schema": tool.inputSchema,
+                "input_schema": getattr(
+                    tool,
+                    "input_schema",
+                    getattr(tool, "inputSchema", None),
+                ),
             }
             for tool in response.tools
         ]

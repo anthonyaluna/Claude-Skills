@@ -15,7 +15,7 @@ orchestrator = client.beta.agents.create(
     name="Engineering Lead",
     model="claude-opus-4-8",
     system="You coordinate engineering work. Delegate code review to the reviewer and test writing to the test agent.",
-    tools=[{"type": "agent_toolset_20260401"}],
+    tools=[{"type": "agent_toolset_20260401", "default_config": {"enabled": False}}],
     multiagent={
         "type": "coordinator",
         "agents": [
@@ -71,20 +71,46 @@ Each `SessionThread` carries `id`, `status` (`running` | `idle` | `rescheduling`
 
 ## Tool permissions and custom tools from subagent threads
 
-When a subagent needs your client (an `always_ask` confirmation, or a custom tool result), the request is **cross-posted to the primary thread** with `session_thread_id` identifying the originating thread — so you only need to watch the session stream. Reply with `user.tool_confirmation` (carrying `tool_use_id`) or `user.custom_tool_result` (carrying `custom_tool_use_id`), and **echo the `session_thread_id` from the originating event** (the SDK param type and docstring expect it). The server also routes by the tool-use ID, so the echo is belt-and-suspenders rather than load-bearing — but include it.
+When a subagent needs your client (an `always_ask` confirmation, or a custom tool result), the request is **cross-posted to the primary thread** with `session_thread_id` identifying the originating thread — so you only need to watch the session stream. Reply with `user.tool_confirmation` (carrying `tool_use_id`) or `user.custom_tool_result` (carrying `custom_tool_use_id`). Use `session_thread_id` to attribute the pending request for operator review, but do not send it back: the server routes each response by its matching event ID (`tool_use_id` for confirmations, `custom_tool_use_id` for custom results). A `session.thread_status_idle` event can arrive before its listed tool-use events, so wait until the corresponding `agent.tool_use` or `agent.mcp_tool_use` event itself arrives before confirming it. Inspect the originating agent/thread, exact tool, and full input. The application-owned async `operator_confirm` callback must return `True` only after explicit operator approval or a strict, pre-reviewed allowlist match; missing review, errors, timeouts, and unknown decisions deny by default.
 
 ```python
-for event_id in stop.event_ids:
-    pending = events_by_id[event_id]
+import asyncio
+
+
+def consume_late_review(task):
+    if not task.cancelled():
+        task.exception()
+
+
+async def handle_confirmation_event(pending, session, client):
+    if (
+        pending.type not in {"agent.tool_use", "agent.mcp_tool_use"}
+        or pending.evaluated_permission != "ask"
+    ):
+        return
+
+    review_task = asyncio.create_task(operator_confirm(pending))
+    done, _ = await asyncio.wait({review_task}, timeout=30.0)
+    try:
+        approved = review_task.result() is True if review_task in done else False
+    except Exception:
+        approved = False
+    if review_task not in done:
+        review_task.cancel()
+        review_task.add_done_callback(consume_late_review)
+
     confirmation = {
         "type": "user.tool_confirmation",
-        "tool_use_id": event_id,
-        "result": "allow",
+        "tool_use_id": pending.id,
+        "result": "allow" if approved else "deny",
     }
-    if pending.session_thread_id is not None:
-        confirmation["session_thread_id"] = pending.session_thread_id
-    client.beta.sessions.events.send(session.id, events=[confirmation])
+    if not approved:
+        confirmation["deny_message"] = "Not approved by operator."
+    # Do not send pending.session_thread_id; the server routes by pending.id.
+    await client.beta.sessions.events.send(session.id, events=[confirmation])
 ```
+
+`handle_confirmation_event` belongs in your primary session-stream loop. `operator_confirm(pending)` is an application-owned async review flow, not an SDK method. This example assumes `client` is `AsyncAnthropic()`. The callback must show the source thread and full request; after 30 seconds the handler cancels it, sends a denial, and ignores any late decision. Do not automatically allow every pending event.
 
 The same pattern applies to `user.custom_tool_result`.
 

@@ -3,6 +3,18 @@
 # Exit on error
 set -e
 
+# Validate the project name before invoking external commands or creating files.
+if [ "$#" -ne 1 ]; then
+  echo "❌ Usage: ./create-react-shadcn-complete.sh <project-name>"
+  exit 1
+fi
+
+PROJECT_NAME="$1"
+if [[ ! "$PROJECT_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+  echo "❌ Invalid project name: use a leading letter or number, followed only by letters, numbers, '.', '_' or '-'."
+  exit 1
+fi
+
 # Detect Node version
 NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
 
@@ -36,13 +48,6 @@ if ! command -v pnpm &> /dev/null; then
   npm install -g pnpm
 fi
 
-# Check if project name is provided
-if [ -z "$1" ]; then
-  echo "❌ Usage: ./create-react-shadcn-complete.sh <project-name>"
-  exit 1
-fi
-
-PROJECT_NAME="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPONENTS_TARBALL="$SCRIPT_DIR/shadcn-components.tar.gz"
 

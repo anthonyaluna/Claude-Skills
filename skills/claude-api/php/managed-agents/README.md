@@ -29,7 +29,7 @@ $client = new Client(apiKey: 'your-api-key');
 ```php
 $environment = $client->beta->environments->create(
     name: 'my-dev-env',
-    config: ['type' => 'cloud', 'networking' => ['type' => 'unrestricted']],
+    config: ['type' => 'cloud', 'networking' => ['type' => 'limited']],
 );
 echo "Environment ID: {$environment->id}\n"; // env_...
 ```
@@ -42,19 +42,14 @@ echo "Environment ID: {$environment->id}\n"; // env_...
 
 ### Minimal
 
-```php
-use Anthropic\Beta\Agents\BetaManagedAgentsAgentToolset20260401Params;
+This example creates an agent with no built-in tools. Add only the task-specific tools it needs; see `shared/managed-agents-tools.md` for the deny-by-default allowlist pattern.
 
+```php
 // 1. Create the agent (reusable, versioned)
 $agent = $client->beta->agents->create(
     name: 'Coding Assistant',
     model: 'claude-opus-4-8',
     system: 'You are a helpful coding assistant.',
-    tools: [
-        BetaManagedAgentsAgentToolset20260401Params::with(
-            type: 'agent_toolset_20260401',
-        ),
-    ],
 );
 
 // 2. Start a session
@@ -290,8 +285,9 @@ $client->beta->sessions->delete($session->id);
 
 ## MCP Server Integration
 
+With `limited` networking, add only the MCP server's host (`api.githubcopilot.com`) to the environment's `allowed_hosts` before creating a session.
+
 ```php
-use Anthropic\Beta\Agents\BetaManagedAgentsAgentToolset20260401Params;
 use Anthropic\Beta\Agents\BetaManagedAgentsMCPToolsetParams;
 use Anthropic\Beta\Agents\BetaManagedAgentsUrlmcpServerParams;
 use Anthropic\Beta\Sessions\BetaManagedAgentsAgentParams;
@@ -308,7 +304,6 @@ $agent = $client->beta->agents->create(
         ),
     ],
     tools: [
-        BetaManagedAgentsAgentToolset20260401Params::with(type: 'agent_toolset_20260401'),
         BetaManagedAgentsMCPToolsetParams::with(
             type: 'mcp_toolset',
             mcpServerName: 'github',

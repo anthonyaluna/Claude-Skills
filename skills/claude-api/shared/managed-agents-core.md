@@ -108,7 +108,7 @@ const agent = await client.beta.agents.create(
     name: "Coding Assistant",
     model: "claude-opus-4-8",
     system: "You are a helpful coding agent.",
-    tools: [{ type: "agent_toolset_20260401"}],
+    tools: [{ type: "agent_toolset_20260401", default_config: { enabled: false } }],
   },
 );
 
@@ -241,7 +241,7 @@ client.beta.sessions.update(
     session.id,
     agent={
         "tools": [
-            {"type": "agent_toolset_20260401"},
+            {"type": "agent_toolset_20260401", "default_config": {"enabled": False}},
             {"type": "mcp_toolset", "mcp_server_name": "linear"},
         ],
         "mcp_servers": [{"type": "url", "name": "linear", "url": "https://mcp.linear.app/sse"}],

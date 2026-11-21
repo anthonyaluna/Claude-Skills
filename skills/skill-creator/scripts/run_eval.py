@@ -11,12 +11,13 @@ import os
 import select
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-from scripts.utils import parse_skill_md
+from scripts.utils import parse_skill_md, require_restricted_claude_cli
 
 
 def find_project_root() -> Path:
@@ -47,7 +48,9 @@ def run_single_query(
     Uses --include-partial-messages to detect triggering early from
     stream events (content_block_start) rather than waiting for the
     full assistant message, which only arrives after tool execution.
+    Restricted mode exposes only the Skill tool used for this detection.
     """
+    require_restricted_claude_cli()
     unique_id = uuid.uuid4().hex[:8]
     clean_name = f"{skill_name}-skill-{unique_id}"
     project_commands_dir = Path(project_root) / ".claude" / "commands"
@@ -69,10 +72,20 @@ def run_single_query(
 
         cmd = [
             "claude",
-            "-p", query,
+            "-p",
             "--output-format", "stream-json",
             "--verbose",
             "--include-partial-messages",
+            "--restricted",
+            "--tools",
+            "Skill",
+            "--allowedTools",
+            "Skill",
+            "--disallowedTools",
+            "mcp__*",
+            "--permission-mode",
+            "dontAsk",
+            "--no-session-persistence",
         ]
         if model:
             cmd.extend(["--model", model])
@@ -84,11 +97,26 @@ def run_single_query(
 
         process = subprocess.Popen(
             cmd,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             cwd=project_root,
             env=env,
         )
+
+        def write_query() -> None:
+            try:
+                process.stdin.write(query.encode("utf-8"))
+            except OSError:
+                pass
+            finally:
+                if process.stdin is not None and not process.stdin.closed:
+                    try:
+                        process.stdin.close()
+                    except OSError:
+                        pass
+
+        prompt_writer = threading.Thread(target=write_query, daemon=True)
 
         triggered = False
         start_time = time.time()
@@ -98,6 +126,7 @@ def run_single_query(
         accumulated_json = ""
 
         try:
+            prompt_writer.start()
             while time.time() - start_time < timeout:
                 if process.poll() is not None:
                     remaining = process.stdout.read()
@@ -174,6 +203,8 @@ def run_single_query(
             if process.poll() is None:
                 process.kill()
                 process.wait()
+            if prompt_writer.ident is not None:
+                prompt_writer.join(timeout=1.0)
 
         return triggered
     finally:

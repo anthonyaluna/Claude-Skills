@@ -27,7 +27,7 @@ curl -X POST https://api.anthropic.com/v1/environments \
     "name": "my-dev-env",
     "config": {
       "type": "cloud",
-      "networking": { "type": "unrestricted" }
+      "networking": { "type": "limited" }
     }
   }'
 ```
@@ -43,8 +43,6 @@ curl -X POST https://api.anthropic.com/v1/environments \
       "type": "cloud",
       "networking": {
         "type": "limited",
-        "allow_package_managers": true,
-        "allow_mcp_servers": true,
         "allowed_hosts": ["api.example.com"]
       }
     }
@@ -59,6 +57,8 @@ curl -X POST https://api.anthropic.com/v1/environments \
 
 ### Minimal
 
+This example creates an agent with no built-in tools. Add only the task-specific tools it needs; see `shared/managed-agents-tools.md` for the deny-by-default allowlist pattern.
+
 ```bash
 # 1. Create the agent
 curl -X POST https://api.anthropic.com/v1/agents \
@@ -66,7 +66,6 @@ curl -X POST https://api.anthropic.com/v1/agents \
   -d '{
     "name": "Coding Assistant",
     "model": "claude-opus-4-8",
-    "tools": [{ "type": "agent_toolset_20260401" }]
   }'
 # → { "id": "agent_abc123", ... }
 
@@ -90,7 +89,6 @@ curl -X POST https://api.anthropic.com/v1/agents \
     "model": "claude-opus-4-8",
     "system": "You are a senior code reviewer. Be thorough and constructive.",
     "tools": [
-      { "type": "agent_toolset_20260401" },
       {
         "type": "custom",
         "name": "run_linter",
@@ -182,7 +180,9 @@ curl "https://api.anthropic.com/v1/sessions/$SESSION_ID/events?page=page_abc123"
 
 ## Provide Custom Tool Result
 
-When the agent calls a custom tool, send the result back:
+When the agent calls a custom tool, send the result back. Replace the sample
+`sevt_abc123` with the `id` from the matching `agent.custom_tool_use` event
+before sending.
 
 ```bash
 curl -X POST https://api.anthropic.com/v1/sessions/$SESSION_ID/events \
@@ -287,6 +287,8 @@ curl https://api.anthropic.com/v1/agents \
 
 ## MCP Server Integration
 
+With `limited` networking, add only the MCP server's host (`my-mcp-server.example.com`) to the environment's `allowed_hosts` before creating a session.
+
 ```bash
 # 1. Agent declares MCP server (no auth here — auth goes in a vault)
 curl -X POST https://api.anthropic.com/v1/agents \
@@ -298,7 +300,6 @@ curl -X POST https://api.anthropic.com/v1/agents \
       { "type": "url", "name": "my-tools", "url": "https://my-mcp-server.example.com/sse" }
     ],
     "tools": [
-      { "type": "agent_toolset_20260401" },
       { "type": "mcp_toolset", "mcp_server_name": "my-tools" }
     ]
   }'
@@ -328,9 +329,14 @@ curl -X POST https://api.anthropic.com/v1/agents \
     "tools": [
       {
         "type": "agent_toolset_20260401",
-        "default_config": { "enabled": true },
+        "default_config": {
+          "enabled": false,
+          "permission_policy": { "type": "auto" }
+        },
         "configs": [
-          { "name": "bash", "enabled": false }
+          { "name": "read", "enabled": true },
+          { "name": "glob", "enabled": true },
+          { "name": "grep", "enabled": true }
         ]
       }
     ]

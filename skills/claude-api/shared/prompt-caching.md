@@ -64,7 +64,7 @@ Many requests share a large fixed preamble (few-shot examples, retrieved docs, i
 
 ### Mid-conversation system messages
 
-**Beta, model-gated.** When an operator instruction arrives mid-conversation — a mode switch, updated context, dynamically injected state — send it as `{"role": "system", "content": "..."}` appended to `messages[]`, rather than editing top-level `system`. Editing top-level `system` changes the prefix ahead of the entire conversation history, so every cached turn is re-processed uncached; a `role: "system"` message sits after the history and leaves the cached prefix intact.
+**Model-gated.** When an operator instruction arrives mid-conversation — a mode switch, updated context, dynamically injected state — send it as `{"role": "system", "content": "..."}` appended to `messages[]`, rather than editing top-level `system`. Editing top-level `system` changes the prefix ahead of the entire conversation history, so every cached turn is re-processed uncached; a `role: "system"` message sits after the history and leaves the cached prefix intact. No beta header is required for this feature on supported models; consult the [current model support and placement rules](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages).
 
 ```json
 // Top-level system stays byte-identical; new instruction goes after the cached history
@@ -78,7 +78,7 @@ Many requests share a large fixed preamble (few-shot examples, retrieved docs, i
 
 This is also the prompt-injection-safe replacement for embedding operator instructions as text inside a user turn (the `<system-reminder>` pattern): both have the same caching profile, but `role: "system"` is the non-spoofable operator channel, whereas text inside user/tool content can be forged by anything that writes to user-visible input.
 
-Requires `anthropic-beta: mid-conversation-system-2026-04-07`. Must follow a `role: "user"` message (or an assistant message ending in a server tool result); cannot be `messages[0]` — use top-level `system` for the initial prompt. Content is text-only. Model-gated — unsupported models return a 400 (`BadRequestError`: `role 'system' is not supported on this model`); catch that error and fall back to putting the instruction in a user-turn `<system-reminder>` block.
+Must follow a `role: "user"` message (or an assistant message ending in a server tool result); cannot be `messages[0]` — use top-level `system` for the initial prompt. Content is text-only. Unsupported models cannot accept this mid-conversation instruction. Do not treat a user-turn `<system-reminder>` as an authoritative fallback: it is ordinary, potentially forged user content and cannot grant permissions, authorize tool use or side effects, or override policy. If the instruction must carry operator authority, start a new session with it in top-level `system`; otherwise omit the mid-session instruction and fail closed on any privileged action that depends on it.
 
 ### Prompts that change from the beginning every time
 

@@ -33,7 +33,7 @@ environment = client.beta.environments.create(
     name="my-dev-env",
     config={
         "type": "cloud",
-        "networking": {"type": "unrestricted"},
+        "networking": {"type": "limited"},
     },
 )
 print(environment.id)  # env_...
@@ -47,12 +47,13 @@ print(environment.id)  # env_...
 
 ### Minimal
 
+This example creates an agent with no built-in tools. Add only the task-specific tools it needs; see `shared/managed-agents-tools.md` for the deny-by-default allowlist pattern.
+
 ```python
 # 1. Create the agent (reusable, versioned)
 agent = client.beta.agents.create(
     name="Coding Assistant",
     model="claude-opus-4-8",
-    tools=[{"type": "agent_toolset_20260401", "default_config": {"enabled": True}}],
 )
 
 # 2. Start a session
@@ -73,7 +74,6 @@ agent = client.beta.agents.create(
     model="claude-opus-4-8",
     system="You are a senior code reviewer.",
     tools=[
-        {"type": "agent_toolset_20260401"},
         {
             "type": "custom",
             "name": "run_tests",
@@ -167,12 +167,13 @@ with client.beta.sessions.events.stream(
 ## Provide Custom Tool Result
 
 ```python
+# `event` is the matching `agent.custom_tool_use` event being answered.
 client.beta.sessions.events.send(
     session_id=session.id,
     events=[
         {
             "type": "user.custom_tool_result",
-            "custom_tool_use_id": "sevt_abc123",
+            "custom_tool_use_id": event.id,
             "content": [{"type": "text", "text": "All 42 tests passed."}],
         }
     ],
@@ -272,16 +273,23 @@ session = client.beta.sessions.create(
 List files the agent wrote to `/mnt/session/outputs/` during a session, then download them.
 
 ```python
+import secrets
+import tempfile
+from pathlib import Path
+
 # List files associated with a session
 files = client.beta.files.list(
     scope_id=session.id,
     betas=["managed-agents-2026-04-01"],
 )
+output_dir = Path(tempfile.mkdtemp(prefix="managed-agent-outputs-"))
 for f in files.data:
     print(f.filename, f.size_bytes)
-    # Download each file and save to disk
+    # Keep the remote filename as metadata; never use it as a local path.
+    output_path = output_dir / f"download-{secrets.token_hex(16)}"
     file_content = client.beta.files.download(f.id)
-    file_content.write_to_file(f.filename)
+    file_content.write_to_file(str(output_path))
+    print("Saved to", output_path)
 ```
 
 > 💡 There's a brief indexing lag (~1–3s) between `session.status_idle` and output files appearing in `files.list`. Retry once or twice if the list is empty.
@@ -309,6 +317,8 @@ client.beta.sessions.archive(session_id="sesn_011CZxAbc123Def456")
 
 ## MCP Server Integration
 
+With `limited` networking, add only the MCP server's host (`my-mcp-server.example.com`) to the environment's `allowed_hosts` before creating a session.
+
 ```python
 # Agent declares MCP server (no auth here — auth goes in a vault)
 agent = client.beta.agents.create(
@@ -317,10 +327,7 @@ agent = client.beta.agents.create(
     mcp_servers=[
         {"type": "url", "name": "my-tools", "url": "https://my-mcp-server.example.com/sse"},
     ],
-    tools=[
-        {"type": "agent_toolset_20260401", "default_config": {"enabled": True}},
-        {"type": "mcp_toolset", "mcp_server_name": "my-tools"},
-    ],
+    tools=[{"type": "mcp_toolset", "mcp_server_name": "my-tools"}],
 )
 
 # Session attaches vault(s) containing credentials for those MCP server URLs

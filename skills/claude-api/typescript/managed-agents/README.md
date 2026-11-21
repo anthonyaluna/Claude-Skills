@@ -34,7 +34,7 @@ const environment = await client.beta.environments.create(
     name: "my-dev-env",
     config: {
       type: "cloud",
-      networking: { type: "unrestricted" },
+      networking: { type: "limited" },
     },
   },
 );
@@ -49,13 +49,14 @@ console.log(environment.id); // env_...
 
 ### Minimal
 
+This example creates an agent with no built-in tools. Add only the task-specific tools it needs; see `shared/managed-agents-tools.md` for the deny-by-default allowlist pattern.
+
 ```typescript
 // 1. Create the agent (reusable, versioned)
 const agent = await client.beta.agents.create(
   {
     name: "Coding Assistant",
     model: "claude-opus-4-8",
-    tools: [{ type: "agent_toolset_20260401", default_config: { enabled: true } }],
   },
 );
 
@@ -78,7 +79,6 @@ const agent = await client.beta.agents.create(
     model: "claude-opus-4-8",
     system: "You are a senior code reviewer.",
     tools: [
-      { type: "agent_toolset_20260401", default_config: { enabled: true } },
       {
         type: "custom",
         name: "run_tests",
@@ -181,13 +181,14 @@ for await (const event of stream) {
 ## Provide Custom Tool Result
 
 ```typescript
+// `event` is the matching `agent.custom_tool_use` event being answered.
 await client.beta.sessions.events.send(
   session.id,
   {
     events: [
       {
         type: "user.custom_tool_result",
-        custom_tool_use_id: "sevt_abc123",
+        custom_tool_use_id: event.id,
         content: [{ type: "text", text: "All 42 tests passed." }],
       },
     ],
@@ -268,6 +269,9 @@ async function runSession(client: Anthropic, sessionId: string) {
 
 ```typescript
 import fs from "fs";
+import os from "os";
+import path from "path";
+import { randomUUID } from "crypto";
 
 const file = await client.beta.files.upload({
   file: fs.createReadStream("data.csv"),
@@ -297,13 +301,16 @@ const files = await client.beta.files.list({
   scope_id: session.id,
   betas: ["managed-agents-2026-04-01"],
 });
+const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "managed-agent-outputs-"));
 for (const f of files.data) {
   console.log(f.filename, f.size_bytes);
 
-  // Download and save to disk
+  // Keep the remote filename as metadata; never use it as a local path.
   const resp = await client.beta.files.download(f.id);
   const buffer = Buffer.from(await resp.arrayBuffer());
-  fs.writeFileSync(f.filename, buffer);
+  const outputPath = path.join(outputDir, "download-" + randomUUID());
+  fs.writeFileSync(outputPath, buffer, { flag: "wx", mode: 0o600 });
+  console.log("Saved to", outputPath);
 }
 ```
 
@@ -332,6 +339,8 @@ await client.beta.sessions.archive("sesn_011CZxAbc123Def456");
 
 ## MCP Server Integration
 
+With `limited` networking, add only the MCP server's host (`my-mcp-server.example.com`) to the environment's `allowed_hosts` before creating a session.
+
 ```typescript
 // Agent declares MCP server (no auth here — auth goes in a vault)
 const agent = await client.beta.agents.create({
@@ -341,7 +350,6 @@ const agent = await client.beta.agents.create({
     { type: "url", name: "my-tools", url: "https://my-mcp-server.example.com/sse" },
   ],
   tools: [
-    { type: "agent_toolset_20260401", default_config: { enabled: true } },
     { type: "mcp_toolset", mcp_server_name: "my-tools" },
   ],
 });

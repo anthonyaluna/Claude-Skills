@@ -1,7 +1,44 @@
 """Shared utilities for skill-creator scripts."""
 
+from functools import lru_cache
 from pathlib import Path
+import re
+import subprocess
 
+
+
+MIN_RESTRICTED_CLAUDE_VERSION = (2, 1, 248)
+
+
+@lru_cache(maxsize=1)
+def require_restricted_claude_cli() -> None:
+    """Fail closed unless the local CLI supports restricted evaluation mode."""
+    try:
+        result = subprocess.run(
+            ["claude", "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(
+            "Claude Code CLI 2.1.248 or later is required for restricted evaluation."
+        ) from exc
+
+    output = f"{result.stdout}\n{result.stderr}"
+    match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", output)
+    if result.returncode != 0 or not match:
+        raise RuntimeError(
+            "Could not verify the Claude Code CLI version required for restricted evaluation."
+        )
+
+    version = tuple(map(int, match.groups()))
+    if version < MIN_RESTRICTED_CLAUDE_VERSION:
+        raise RuntimeError(
+            f"Claude Code CLI {match.group(0)} is too old; "
+            "version 2.1.248 or later is required for restricted evaluation."
+        )
 
 
 def parse_skill_md(skill_path: Path) -> tuple[str, str, str]:

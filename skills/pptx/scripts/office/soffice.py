@@ -18,6 +18,7 @@ import os
 import socket
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 
@@ -38,7 +39,9 @@ def run_soffice(args: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 
-_SHIM_SO = Path(tempfile.gettempdir()) / "lo_socket_shim.so"
+_SHIM_TEMP_DIR = None
+_SHIM_SO = None
+_SHIM_LOCK = threading.Lock()
 
 
 def _needs_shim() -> bool:
@@ -51,18 +54,32 @@ def _needs_shim() -> bool:
 
 
 def _ensure_shim() -> Path:
-    if _SHIM_SO.exists():
-        return _SHIM_SO
+    global _SHIM_TEMP_DIR, _SHIM_SO
 
-    src = Path(tempfile.gettempdir()) / "lo_socket_shim.c"
-    src.write_text(_SHIM_SOURCE)
-    subprocess.run(
-        ["gcc", "-shared", "-fPIC", "-o", str(_SHIM_SO), str(src), "-ldl"],
-        check=True,
-        capture_output=True,
-    )
-    src.unlink()
-    return _SHIM_SO
+    with _SHIM_LOCK:
+        if _SHIM_SO is not None and _SHIM_SO.is_file():
+            return _SHIM_SO
+
+        temp_dir = tempfile.TemporaryDirectory(prefix="lo_socket_shim-")
+        shim_dir = Path(temp_dir.name)
+        shim_so = shim_dir / "lo_socket_shim.so"
+        src = shim_dir / "lo_socket_shim.c"
+        try:
+            src.write_text(_SHIM_SOURCE)
+            subprocess.run(
+                ["gcc", "-shared", "-fPIC", "-o", str(shim_so), str(src), "-ldl"],
+                check=True,
+                capture_output=True,
+            )
+        except Exception:
+            temp_dir.cleanup()
+            raise
+        finally:
+            src.unlink(missing_ok=True)
+
+        _SHIM_TEMP_DIR = temp_dir
+        _SHIM_SO = shim_so
+        return shim_so
 
 
 
