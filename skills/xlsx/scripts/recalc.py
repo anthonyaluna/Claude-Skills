@@ -20,6 +20,11 @@ RECALCULATE_MACRO = """<?xml version="1.0" encoding="UTF-8"?>
     Sub RecalculateAndSave()
       ThisComponent.calculateAll()
       ThisComponent.store()
+      Dim receipt As Integer
+      receipt = FreeFile
+      Open Environ("CLAUDE_SKILL_OFFICE_RECEIPT") For Output As #receipt
+      Print #receipt, "saved"
+      Close #receipt
       ThisComponent.close(True)
     End Sub
 </script:module>"""
@@ -90,11 +95,17 @@ def recalc(filename, timeout=30):
         elif platform.system() == "Darwin" and has_gtimeout():
             cmd = ["gtimeout", str(timeout)] + cmd
 
+        receipt = profile_dir / "recalculated.txt"
         result = subprocess.run(
-            cmd, capture_output=True, text=True, env=get_soffice_env()
+            cmd, capture_output=True, text=True,
+            env={**get_soffice_env(), "CLAUDE_SKILL_OFFICE_RECEIPT": str(receipt)},
         )
+        if result.returncode == 0 and not receipt.is_file():
+            return {"error": "LibreOffice did not confirm that the recalculated workbook was saved"}
 
-    if result.returncode != 0 and result.returncode != 124:  
+    if result.returncode == 124:
+        return {"error": "LibreOffice timed out before confirming recalculation"}
+    if result.returncode != 0:
         error_msg = result.stderr or "Unknown error during recalculation"
         if "Module1" in error_msg or "RecalculateAndSave" not in error_msg:
             return {"error": "LibreOffice macro not configured properly"}
@@ -181,6 +192,8 @@ def main():
 
     result = recalc(filename, timeout)
     print(json.dumps(result, indent=2))
+    if "error" in result:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

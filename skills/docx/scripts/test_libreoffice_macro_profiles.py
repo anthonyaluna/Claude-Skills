@@ -74,6 +74,64 @@ class LibreOfficeMacroProfileTests(unittest.TestCase):
 
                     self.assertEqual(macro_file.read_text(), malicious_macro)
 
+    def test_xlsx_timeout_is_reported_as_an_error(self):
+        with tempfile.TemporaryDirectory() as work_dir:
+            source = Path(work_dir) / "input.xlsx"
+            source.touch()
+            with (
+                patch.object(self.xlsx, "setup_libreoffice_macro", return_value=True),
+                patch.object(self.xlsx.platform, "system", return_value="Linux"),
+                patch.object(
+                    self.xlsx.subprocess, "run",
+                    return_value=subprocess.CompletedProcess(["timeout"], 124),
+                ),
+            ):
+                result = self.xlsx.recalc(str(source))
+            self.assertIn("timed out", result["error"])
+
+    def test_docx_timeout_is_reported_as_an_error(self):
+        with tempfile.TemporaryDirectory() as work_dir:
+            source = Path(work_dir) / "tracked.docx"
+            output = Path(work_dir) / "accepted.docx"
+            source.touch()
+            output.write_bytes(b"previous document")
+            with (
+                patch.object(self.docx, "_setup_libreoffice_macro", return_value=True),
+                patch.object(
+                    self.docx.subprocess, "run",
+                    side_effect=subprocess.TimeoutExpired(["soffice"], 30),
+                ),
+            ):
+                _, message = self.docx.accept_changes(str(source), str(output))
+            self.assertTrue(message.startswith("Error:"))
+            self.assertIn("timed out", message)
+            self.assertEqual(output.read_bytes(), b"previous document")
+
+    def test_zero_exit_without_confirmation_keeps_existing_docx(self):
+        with tempfile.TemporaryDirectory() as work_dir:
+            source = Path(work_dir) / "tracked.docx"
+            output = Path(work_dir) / "accepted.docx"
+            source.touch()
+            output.write_bytes(b"previous document")
+            with (
+                patch.object(self.docx, "_setup_libreoffice_macro", return_value=True),
+                patch.object(self.docx.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)),
+            ):
+                _, message = self.docx.accept_changes(str(source), str(output))
+            self.assertIn("did not confirm", message)
+            self.assertEqual(output.read_bytes(), b"previous document")
+
+    def test_zero_exit_without_confirmation_does_not_accept_xlsx(self):
+        with tempfile.TemporaryDirectory() as work_dir:
+            source = Path(work_dir) / "input.xlsx"
+            source.touch()
+            with (
+                patch.object(self.xlsx, "setup_libreoffice_macro", return_value=True),
+                patch.object(self.xlsx.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)),
+            ):
+                result = self.xlsx.recalc(str(source))
+            self.assertIn("did not confirm", result["error"])
+
     def test_xlsx_recalc_uses_private_profile_for_setup_and_macro(self):
         with tempfile.TemporaryDirectory() as work_dir:
             workbook_path = Path(work_dir) / "input.xlsx"
@@ -104,6 +162,7 @@ class LibreOfficeMacroProfileTests(unittest.TestCase):
                     self.assertEqual(
                         macro_file.read_text(), self.xlsx.RECALCULATE_MACRO
                     )
+                    Path(kwargs["env"]["CLAUDE_SKILL_OFFICE_RECEIPT"]).write_text("saved\n")
                 calls.append((list(command), profile_dir))
                 return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -159,7 +218,7 @@ class LibreOfficeMacroProfileTests(unittest.TestCase):
 
             def tracked_temp_directory(*args, **kwargs):
                 profile = real_temp_directory(*args, **kwargs)
-                profiles.append(Path(profile.name))
+                profiles.append(Path(profile.name) / "profile")
                 return profile
 
             def fake_run(command, **kwargs):
@@ -176,6 +235,7 @@ class LibreOfficeMacroProfileTests(unittest.TestCase):
                     self.assertEqual(
                         macro_file.read_text(), self.docx.ACCEPT_CHANGES_MACRO
                     )
+                    Path(kwargs["env"]["CLAUDE_SKILL_OFFICE_RECEIPT"]).write_text("saved\n")
                 calls.append((list(command), profile_dir))
                 return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -208,7 +268,7 @@ class LibreOfficeMacroProfileTests(unittest.TestCase):
                     profile_flag(profiles[0]),
                     "--norestore",
                     DOCX_SCRIPT_URI,
-                    str(output_path.absolute()),
+                    str(profiles[0].parent / "document.docx"),
                 ],
             )
 
