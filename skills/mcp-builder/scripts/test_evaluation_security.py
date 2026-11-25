@@ -158,6 +158,26 @@ class EvaluationToolPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(connection.calls, [("read_record", {})])
         self.assertEqual(metrics["read_record"]["count"], 1)
 
+    async def test_budget_exhaustion_scores_one_task_and_preserves_the_next(self):
+        client = FakeClient(
+            [FakeResponse([FakeToolUse("read_record")], "tool_use") for _ in range(13)]
+            + [FakeResponse([FakeText("<response>ok</response>")], "end_turn")]
+        )
+        connection = FakeConnection()
+        results = []
+        for index in range(2):
+            results.append(await evaluation.evaluate_single_task(
+                client, "test-model", {"question": "Read", "answer": "ok"},
+                [{"name": "read_record"}], connection, {"read_record"}, index,
+            ))
+
+        exhausted, completed = results
+        self.assertEqual(exhausted["score"], 0)
+        self.assertEqual(exhausted["num_tool_calls"], 12)
+        self.assertIn("budget", exhausted["summary"])
+        self.assertEqual(completed["score"], 1)
+        self.assertEqual(len(connection.calls), 12)
+
     def test_documented_evaluation_commands_include_an_allowlist(self):
         reference = (
             Path(__file__).resolve().parents[1] / "reference" / "evaluation.md"

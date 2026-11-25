@@ -1110,6 +1110,15 @@
     }
 
     // ---- Feedback (saved to server -> feedback.json) ----
+    async function postFeedback(body) {
+      const response = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Feedback-Token": document.querySelector('meta[name="feedback-token"]')?.content || "" },
+        body,
+      });
+      if (!response.ok) throw new Error(`Feedback save returned HTTP ${response.status}`);
+    }
+
     function saveCurrentFeedback() {
       const run = EMBEDDED_DATA.runs[currentIndex];
       const text = document.getElementById("feedback").value;
@@ -1128,11 +1137,7 @@
         }
       }
 
-      fetch("/api/feedback", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Feedback-Token": document.querySelector('meta[name="feedback-token"]')?.content || "" },
-        body: JSON.stringify({ reviews, status: "in_progress" }),
-      }).then(() => {
+      postFeedback(JSON.stringify({ reviews, status: "in_progress" })).then(() => {
         document.getElementById("feedback-status").textContent = "Saved";
       }).catch(() => {
         // Static mode or server unavailable — no-op on auto-save,
@@ -1160,11 +1165,7 @@
         reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
       }
       const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
-      fetch("/api/feedback", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Feedback-Token": document.querySelector('meta[name="feedback-token"]')?.content || "" },
-        body: payload,
-      }).then(() => {
+      postFeedback(payload).then(() => {
         document.getElementById("done-overlay").classList.add("visible");
       }).catch(() => {
         // Server not available (static mode) — download as file

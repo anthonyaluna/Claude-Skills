@@ -163,7 +163,10 @@ async def agent_loop(
     while response.stop_reason == "tool_use":
         steps += 1
         if steps > 12:
-            raise ValueError("Evaluation tool budget exceeded")
+            return (
+                "<summary>Evaluation stopped after reaching the 12-call tool budget.</summary>",
+                tool_metrics,
+            )
         tool_use = next(block for block in response.content if block.type == "tool_use")
         tool_name = tool_use.name
         tool_input = tool_use.input

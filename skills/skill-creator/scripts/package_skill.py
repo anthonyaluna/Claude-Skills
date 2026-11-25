@@ -11,6 +11,8 @@ Example:
 """
 
 import fnmatch
+import os
+import stat
 import sys
 import zipfile
 from pathlib import Path
@@ -22,20 +24,6 @@ EXCLUDE_GLOBS = {"*.pyc"}
 EXCLUDE_FILES = {".DS_Store"}
 # Directories excluded only at the skill root (not when nested deeper).
 ROOT_EXCLUDE_DIRS = {"evals"}
-
-
-def _require_local_tree(root: Path) -> None:
-    import os
-    import stat
-
-    def fail(error):
-        raise error
-
-    for current, directories, files in os.walk(root, followlinks=False, onerror=fail):
-        for name in (".", *directories, *files):
-            entry = (Path(current) / name).lstat()
-            if stat.S_ISLNK(entry.st_mode) or getattr(entry, "st_file_attributes", 0) & 0x400:
-                raise ValueError("Input tree contains a linked file or directory")
 
 
 def should_exclude(rel_path: Path) -> bool:
@@ -51,6 +39,29 @@ def should_exclude(rel_path: Path) -> bool:
     if name in EXCLUDE_FILES:
         return True
     return any(fnmatch.fnmatch(name, pat) for pat in EXCLUDE_GLOBS)
+
+
+def _included_files(root: Path) -> list[Path]:
+    def fail(error):
+        raise error
+
+    files_to_package = []
+    for current, directories, files in os.walk(root, followlinks=False, onerror=fail):
+        directory = Path(current)
+        directories[:] = [
+            name for name in directories
+            if not should_exclude((directory / name).relative_to(root.parent))
+        ]
+        for name in (*directories, *files):
+            path = directory / name
+            if should_exclude(path.relative_to(root.parent)):
+                continue
+            entry = path.lstat()
+            if stat.S_ISLNK(entry.st_mode) or getattr(entry, "st_file_attributes", 0) & 0x400:
+                raise ValueError("Input tree contains a linked file or directory")
+            if stat.S_ISREG(entry.st_mode):
+                files_to_package.append(path)
+    return files_to_package
 
 
 def package_skill(skill_path, output_dir=None):
@@ -75,7 +86,7 @@ def package_skill(skill_path, output_dir=None):
         print(f"❌ Error: Path is not a directory: {skill_path}")
         return None
 
-    _require_local_tree(skill_path)
+    files_to_package = _included_files(skill_path)
 
     # Validate SKILL.md exists
     skill_md = skill_path / "SKILL.md"
@@ -105,14 +116,8 @@ def package_skill(skill_path, output_dir=None):
     # Create the .skill file (zip format)
     try:
         with zipfile.ZipFile(skill_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            # Walk through the skill directory, excluding build artifacts
-            for file_path in skill_path.rglob('*'):
-                if not file_path.is_file():
-                    continue
+            for file_path in files_to_package:
                 arcname = file_path.relative_to(skill_path.parent)
-                if should_exclude(arcname):
-                    print(f"  Skipped: {arcname}")
-                    continue
                 zipf.write(file_path, arcname)
                 print(f"  Added: {arcname}")
 
