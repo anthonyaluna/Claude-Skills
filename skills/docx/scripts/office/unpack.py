@@ -51,6 +51,16 @@ def unpack(
         output_path.mkdir(parents=True, exist_ok=True)
 
         with zipfile.ZipFile(input_path, "r") as zf:
+            members = zf.infolist()
+            if len(members) > 4096 or sum(item.file_size for item in members) > 128 * 1024 * 1024:
+                raise ValueError("Office archive exceeds extraction limits")
+            root = output_path.resolve()
+            for item in members:
+                if item.file_size > 32 * 1024 * 1024 or item.file_size > max(1, item.compress_size) * 1000:
+                    raise ValueError("Office archive member exceeds extraction limits")
+                target = (root / item.filename).resolve()
+                if not target.is_relative_to(root) or "\\" in item.filename or Path(item.filename).is_absolute():
+                    raise ValueError("Invalid Office archive member")
             zf.extractall(output_path)
 
         xml_files = list(output_path.rglob("*.xml")) + list(output_path.rglob("*.rels"))

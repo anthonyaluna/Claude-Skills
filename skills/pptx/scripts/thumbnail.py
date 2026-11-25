@@ -28,6 +28,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 THUMBNAIL_WIDTH = 300
 CONVERSION_DPI = 100
+MAX_VISIBLE_SLIDES = 100
 MAX_COLS = 6
 DEFAULT_COLS = 3
 JPEG_QUALITY = 95
@@ -143,6 +144,15 @@ def build_slide_list(
                 slides.append((visible_images[visible_idx], info["name"]))
                 visible_idx += 1
 
+    omitted_count = len(slide_info) - len(slides)
+    if omitted_count:
+        print(
+            f"Warning: {omitted_count} slide(s) omitted from the grid. "
+            f"The renderer supplied {len(visible_images)} page image(s) "
+            f"with a limit of {MAX_VISIBLE_SLIDES}.",
+            file=sys.stderr,
+        )
+
     return slides
 
 
@@ -168,6 +178,7 @@ def convert_to_images(pptx_path: Path, temp_dir: Path) -> list[Path]:
             str(temp_dir),
             str(pptx_path),
         ],
+        timeout=60,
         capture_output=True,
         text=True,
         env=get_soffice_env(),
@@ -179,11 +190,14 @@ def convert_to_images(pptx_path: Path, temp_dir: Path) -> list[Path]:
         [
             "pdftoppm",
             "-jpeg",
+            "-l", str(MAX_VISIBLE_SLIDES),
+            "-scale-to", "2048",
             "-r",
             str(CONVERSION_DPI),
             str(pdf_path),
             str(temp_dir / "slide"),
         ],
+        timeout=60,
         capture_output=True,
         text=True,
     )

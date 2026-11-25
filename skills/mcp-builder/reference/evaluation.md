@@ -450,8 +450,8 @@ python scripts/evaluation.py \
   -t stdio \
   -c python \
   -a my_mcp_server.py \
-  -e API_KEY=abc123 \
-  -e DEBUG=true \
+  --stdio-env API_KEY \
+  --stdio-env DEBUG \
   evaluation.xml
 ```
 
@@ -464,8 +464,8 @@ python scripts/evaluation.py \
   --allow-tool list_records \
   -t sse \
   -u https://example.com/mcp \
-  -H "Authorization: Bearer token123" \
-  -H "X-Custom-Header: value" \
+  --header-env Authorization=MCP_AUTHORIZATION \
+  --header-env X-Custom-Header=MCP_CUSTOM_HEADER \
   evaluation.xml
 ```
 
@@ -478,7 +478,7 @@ python scripts/evaluation.py \
   --allow-tool list_records \
   -t http \
   -u https://example.com/mcp \
-  -H "Authorization: Bearer token123" \
+  --header-env Authorization=MCP_AUTHORIZATION \
   evaluation.xml
 ```
 
@@ -487,7 +487,7 @@ python scripts/evaluation.py \
 ```
 usage: evaluation.py [-h] --allow-tool ALLOWED_TOOLS [-t {stdio,sse,http}]
                      [-m MODEL] [-c COMMAND] [-a ARGS [ARGS ...]]
-                     [-e ENV [ENV ...]] [-u URL] [-H HEADERS [HEADERS ...]]
+                     [--stdio-env VARIABLE] [-u URL] [--header-env HEADER=VARIABLE]
                      [-o OUTPUT] eval_file
 
 positional arguments:
@@ -504,11 +504,11 @@ optional arguments:
 stdio options:
   -c, --command         Command to run MCP server (e.g., python, node)
   -a, --args            Arguments for the command (e.g., server.py)
-  -e, --env             Environment variables in KEY=VALUE format
+  --stdio-env VARIABLE  Inherit a named environment variable
 
 sse/http options:
   -u, --url             MCP server URL
-  -H, --header          HTTP headers in 'Key: Value' format
+  --header-env HEADER=VARIABLE  Set a header from a named environment variable
 ```
 
 ## Output
@@ -579,7 +579,7 @@ python scripts/evaluation.py \
   -t stdio \
   -c python \
   -a github_mcp_server.py \
-  -e GITHUB_TOKEN=ghp_xxx \
+  --stdio-env GITHUB_TOKEN \
   -o github_eval_report.md \
   my_evaluation.xml
 ```

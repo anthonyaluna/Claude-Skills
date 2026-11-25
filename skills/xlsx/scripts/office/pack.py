@@ -21,6 +21,20 @@ import defusedxml.minidom
 
 from validators import DOCXSchemaValidator, PPTXSchemaValidator, RedliningValidator
 
+def _require_local_tree(root: Path) -> None:
+    import os
+    import stat
+
+    def fail(error):
+        raise error
+
+    for current, directories, files in os.walk(root, followlinks=False, onerror=fail):
+        for name in (".", *directories, *files):
+            entry = (Path(current) / name).lstat()
+            if stat.S_ISLNK(entry.st_mode) or getattr(entry, "st_file_attributes", 0) & 0x400:
+                raise ValueError("Input tree contains a linked file or directory")
+
+
 def pack(
     input_directory: str,
     output_file: str,
@@ -34,6 +48,8 @@ def pack(
 
     if not input_dir.is_dir():
         return None, f"Error: {input_dir} is not a directory"
+
+    _require_local_tree(input_dir)
 
     if suffix not in {".docx", ".pptx", ".xlsx"}:
         return None, f"Error: {output_file} must be a .docx, .pptx, or .xlsx file"
