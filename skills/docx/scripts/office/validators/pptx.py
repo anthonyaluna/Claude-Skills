@@ -69,7 +69,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
 
         for xml_file in self.xml_files:
             try:
-                root = lxml.etree.parse(str(xml_file)).getroot()
+                root = lxml.etree.parse(str(xml_file), parser=lxml.etree.XMLParser(resolve_entities=False, load_dtd=False, no_network=True)).getroot()
 
                 for elem in root.iter():
                     for attr, value in elem.attrib.items():
@@ -115,7 +115,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
 
         for slide_master in slide_masters:
             try:
-                root = lxml.etree.parse(str(slide_master)).getroot()
+                root = lxml.etree.parse(str(slide_master), parser=lxml.etree.XMLParser(resolve_entities=False, load_dtd=False, no_network=True)).getroot()
 
                 rels_file = slide_master.parent / "_rels" / f"{slide_master.name}.rels"
 
@@ -126,7 +126,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
                     )
                     continue
 
-                rels_root = lxml.etree.parse(str(rels_file)).getroot()
+                rels_root = lxml.etree.parse(str(rels_file), parser=lxml.etree.XMLParser(resolve_entities=False, load_dtd=False, no_network=True)).getroot()
 
                 valid_layout_rids = set()
                 for rel in rels_root.findall(
@@ -177,7 +177,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
 
         for rels_file in slide_rels_files:
             try:
-                root = lxml.etree.parse(str(rels_file)).getroot()
+                root = lxml.etree.parse(str(rels_file), parser=lxml.etree.XMLParser(resolve_entities=False, load_dtd=False, no_network=True)).getroot()
 
                 layout_rels = [
                     rel
@@ -222,7 +222,7 @@ class PPTXSchemaValidator(BaseSchemaValidator):
 
         for rels_file in slide_rels_files:
             try:
-                root = lxml.etree.parse(str(rels_file)).getroot()
+                root = lxml.etree.parse(str(rels_file), parser=lxml.etree.XMLParser(resolve_entities=False, load_dtd=False, no_network=True)).getroot()
 
                 for rel in root.findall(
                     f".//{{{self.PACKAGE_RELATIONSHIPS_NAMESPACE}}}Relationship"

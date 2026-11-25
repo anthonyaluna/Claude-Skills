@@ -18,6 +18,7 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import signal
 import stat
 import subprocess
@@ -477,6 +478,9 @@ def _kill_port(port: int) -> None:
     except FileNotFoundError:
         print("Note: lsof not found, cannot check if port is in use", file=sys.stderr)
 
+FEEDBACK_TOKEN = secrets.token_urlsafe(32)
+
+
 class ReviewHandler(BaseHTTPRequestHandler):
     """Serves the review HTML and handles feedback saves.
 
@@ -502,6 +506,9 @@ class ReviewHandler(BaseHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def do_GET(self) -> None:
+        if self.headers.get("Host") != f"127.0.0.1:{self.server.server_address[1]}":
+            self.send_error(403)
+            return
         if self.path == "/" or self.path == "/index.html":
             # Regenerate HTML on each request (re-scans workspace for new outputs)
             runs = find_runs(self.workspace)
@@ -512,6 +519,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
                 except (json.JSONDecodeError, OSError):
                     pass
             html = generate_html(runs, self.skill_name, self.previous, benchmark)
+            html = html.replace("<head>", f'<head><meta name="feedback-token" content="{FEEDBACK_TOKEN}">', 1)
             content = html.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -542,6 +550,14 @@ class ReviewHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if self.path == "/api/feedback":
+            expected_host = f"127.0.0.1:{self.server.server_address[1]}"
+            if (self.headers.get("Host") != expected_host or self.headers.get("Origin") != f"http://{expected_host}"
+                or not secrets.compare_digest(self.headers.get("X-Feedback-Token", ""), FEEDBACK_TOKEN)):
+                self.send_error(403)
+                return
+            if not self.headers.get("Content-Length", "").isdigit() or int(self.headers["Content-Length"]) > 1024 * 1024:
+                self.send_error(413)
+                return
             safe_feedback_path = _safe_workspace_path(
                 self.workspace, self.feedback_path
             )
@@ -650,7 +666,7 @@ def main() -> None:
         server = HTTPServer(("127.0.0.1", 0), handler)
         port = server.server_address[1]
 
-    url = f"http://localhost:{port}"
+    url = f"http://127.0.0.1:{port}"
     print("\n  Eval Viewer")
     print("  ─────────────────────────────────")
     print(f"  URL:       {url}")

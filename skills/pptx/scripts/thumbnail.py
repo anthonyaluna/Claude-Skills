@@ -168,6 +168,7 @@ def convert_to_images(pptx_path: Path, temp_dir: Path) -> list[Path]:
             str(temp_dir),
             str(pptx_path),
         ],
+        timeout=60,
         capture_output=True,
         text=True,
         env=get_soffice_env(),
@@ -179,11 +180,14 @@ def convert_to_images(pptx_path: Path, temp_dir: Path) -> list[Path]:
         [
             "pdftoppm",
             "-jpeg",
+            "-l", "100",
+            "-scale-to", "2048",
             "-r",
             str(CONVERSION_DPI),
             str(pdf_path),
             str(temp_dir / "slide"),
         ],
+        timeout=60,
         capture_output=True,
         text=True,
     )

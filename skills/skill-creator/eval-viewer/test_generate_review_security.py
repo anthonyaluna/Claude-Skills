@@ -258,6 +258,8 @@ class GeneratedReviewSecurityTests(unittest.TestCase):
             handler.send_error = Mock()
 
             with self._mark_paths_as_links(feedback_path):
+                handler.server = Mock(server_address=("127.0.0.1", 8080))
+                handler.headers = {**getattr(handler, "headers", {}), "Host": "127.0.0.1:8080", "Origin": "http://127.0.0.1:8080", "X-Feedback-Token": generate_review.FEEDBACK_TOKEN}
                 handler.do_POST()
 
             self.assertEqual(external_feedback.read_text(encoding="utf-8"), "original")
@@ -286,6 +288,8 @@ class GeneratedReviewSecurityTests(unittest.TestCase):
             handler.end_headers = Mock()
 
             with self._mark_paths_as_links(feedback_path):
+                handler.server = Mock(server_address=("127.0.0.1", 8080))
+                handler.headers = {**getattr(handler, "headers", {}), "Host": "127.0.0.1:8080", "Origin": "http://127.0.0.1:8080", "X-Feedback-Token": generate_review.FEEDBACK_TOKEN}
                 handler.do_GET()
 
             response_body = handler.wfile.getvalue()

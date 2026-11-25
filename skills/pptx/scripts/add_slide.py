@@ -163,7 +163,9 @@ def _get_next_slide_id(unpacked_dir: Path) -> int:
 
 
 def parse_source(source: str) -> tuple[str, str | None]:
-    if source.startswith("slideLayout") and source.endswith(".xml"):
+    if not re.fullmatch(r"slide(?:Layout)?[1-9][0-9]*\.xml", source):
+        raise ValueError("Expected a slide or layout filename")
+    if source.startswith("slideLayout"):
         return ("layout", source)
 
     return ("slide", None)

@@ -4,6 +4,7 @@ This script evaluates MCP servers by running test questions against them using C
 """
 
 import argparse
+import os
 import asyncio
 import json
 import re
@@ -158,7 +159,11 @@ async def agent_loop(
 
     tool_metrics = {}
 
+    steps = 0
     while response.stop_reason == "tool_use":
+        steps += 1
+        if steps > 12:
+            raise ValueError("Evaluation tool budget exceeded")
         tool_use = next(block for block in response.content if block.type == "tool_use")
         tool_name = tool_use.name
         tool_input = tool_use.input
@@ -169,11 +174,12 @@ async def agent_loop(
 
         tool_start_ts = time.time()
         try:
-            tool_result = await connection.call_tool(tool_name, tool_input)
+            tool_result = await asyncio.wait_for(connection.call_tool(tool_name, tool_input), timeout=30)
             tool_response = json.dumps(tool_result) if isinstance(tool_result, (dict, list)) else str(tool_result)
         except Exception as e:
             tool_response = f"Error executing tool {tool_name}: {str(e)}\n"
             tool_response += traceback.format_exc()
+        tool_response = tool_response[:16_384]
         tool_duration = time.time() - tool_start_ts
 
         if tool_name not in tool_metrics:
@@ -290,9 +296,9 @@ async def run_evaluation(
     """Run evaluation with MCP server tools."""
     print("🚀 Starting Evaluation")
 
-    client = Anthropic()
+    client = Anthropic(timeout=30, max_retries=1)
 
-    advertised_tools = await connection.list_tools()
+    advertised_tools = await asyncio.wait_for(connection.list_tools(), timeout=30)
     tools = select_allowlisted_tools(advertised_tools, allowed_tool_names or [])
     allowed_names = {tool["name"] for tool in tools}
     print(
@@ -415,6 +421,8 @@ Examples:
 
     remote_group = parser.add_argument_group("sse/http options")
     remote_group.add_argument("-u", "--url", help="MCP server URL (sse/http only)")
+    remote_group.add_argument("--header-env", action="append", default=[], metavar="HEADER=VARIABLE")
+    stdio_group.add_argument("--stdio-env", action="append", default=[], metavar="VARIABLE")
     remote_group.add_argument("-H", "--header", nargs="+", dest="headers", help="HTTP headers in 'Key: Value' format (sse/http only)")
 
     parser.add_argument("-o", "--output", type=Path, help="Output file for evaluation report (default: stdout)")
@@ -425,8 +433,10 @@ Examples:
         print(f"Error: Evaluation file not found: {args.eval_file}")
         sys.exit(1)
 
-    headers = parse_headers(args.headers) if args.headers else None
-    env_vars = parse_env_vars(args.env) if args.env else None
+    if args.headers or args.env:
+        parser.error("Use --header-env or --stdio-env to name environment variables")
+    headers = {name: os.environ[var] for name, var in (item.split("=", 1) for item in args.header_env)}
+    env_vars = {name: os.environ[name] for name in args.stdio_env}
 
     try:
         connection = create_connection(

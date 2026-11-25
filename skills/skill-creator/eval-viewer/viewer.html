@@ -1130,7 +1130,7 @@
 
       fetch("/api/feedback", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Feedback-Token": document.querySelector('meta[name="feedback-token"]')?.content || "" },
         body: JSON.stringify({ reviews, status: "in_progress" }),
       }).then(() => {
         document.getElementById("feedback-status").textContent = "Saved";
@@ -1162,7 +1162,7 @@
       const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
       fetch("/api/feedback", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Feedback-Token": document.querySelector('meta[name="feedback-token"]')?.content || "" },
         body: payload,
       }).then(() => {
         document.getElementById("done-overlay").classList.add("visible");
