@@ -24,6 +24,20 @@ import defusedxml.minidom
 import re
 
 
+def _require_local_tree(root: Path) -> None:
+    import os
+    import stat
+
+    def fail(error):
+        raise error
+
+    for current, directories, files in os.walk(root, followlinks=False, onerror=fail):
+        for name in (".", *directories, *files):
+            entry = (Path(current) / name).lstat()
+            if stat.S_ISLNK(entry.st_mode) or getattr(entry, "st_file_attributes", 0) & 0x400:
+                raise ValueError("Input tree contains a linked file or directory")
+
+
 def get_slides_in_sldidlst(unpacked_dir: Path) -> set[str]:
     pres_path = unpacked_dir / "ppt" / "presentation.xml"
     pres_rels_path = unpacked_dir / "ppt" / "_rels" / "presentation.xml.rels"
@@ -239,6 +253,8 @@ def update_content_types(unpacked_dir: Path, removed_files: list[str]) -> None:
 
 
 def clean_unused_files(unpacked_dir: Path) -> list[str]:
+    _require_local_tree(unpacked_dir)
+
     all_removed = []
 
     slides_removed = remove_orphaned_slides(unpacked_dir)

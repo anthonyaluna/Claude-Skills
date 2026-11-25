@@ -24,6 +24,20 @@ EXCLUDE_FILES = {".DS_Store"}
 ROOT_EXCLUDE_DIRS = {"evals"}
 
 
+def _require_local_tree(root: Path) -> None:
+    import os
+    import stat
+
+    def fail(error):
+        raise error
+
+    for current, directories, files in os.walk(root, followlinks=False, onerror=fail):
+        for name in (".", *directories, *files):
+            entry = (Path(current) / name).lstat()
+            if stat.S_ISLNK(entry.st_mode) or getattr(entry, "st_file_attributes", 0) & 0x400:
+                raise ValueError("Input tree contains a linked file or directory")
+
+
 def should_exclude(rel_path: Path) -> bool:
     """Check if a path should be excluded from packaging."""
     parts = rel_path.parts
@@ -60,6 +74,8 @@ def package_skill(skill_path, output_dir=None):
     if not skill_path.is_dir():
         print(f"❌ Error: Path is not a directory: {skill_path}")
         return None
+
+    _require_local_tree(skill_path)
 
     # Validate SKILL.md exists
     skill_md = skill_path / "SKILL.md"
